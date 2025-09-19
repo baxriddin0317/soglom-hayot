@@ -92,7 +92,7 @@ class ReminderService {
       // Hozirgi vaqtda eslatma berish kerak bo'lgan dorilarni topish
       const histories = await DatabaseService.getPendingReminders(currentTime, today);
       
-      console.log(`📋 ${histories.length} ta eslatma topildi`);
+      console.log(`📋  ${histories.length} ta eslatma topildi`);
       
       for (const history of histories) {
         await this.sendReminder(history);
