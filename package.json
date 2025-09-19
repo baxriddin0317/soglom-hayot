@@ -1,0 +1,42 @@
+{
+  "name": "soglom-hayot",
+  "version": "1.0.0",
+  "description": "O'zbekiston uchun dori eslatuvchi Telegram bot",
+  "main": "bot.js",
+  "scripts": {
+    "dev": "nodemon bot.js",
+    "start": "node bot.js",
+    "test": "echo \"Testlar hali amalga oshirilmagan\" && exit 0"
+  },
+  "keywords": [
+    "telegram-bot",
+    "uzbekistan",
+    "medicine-reminder",
+    "health",
+    "dori-eslatuvchi"
+  ],
+  "author": "Soglom Hayot Team",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^17.2.1",
+    "mongodb": "^6.20.0",
+    "mongoose": "^8.17.0",
+    "node-cron": "^4.2.1",
+    "telegraf": "^4.16.3",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/soglom-hayot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-username/soglom-hayot/issues"
+  },
+  "homepage": "https://github.com/your-username/soglom-hayot#readme"
+}
