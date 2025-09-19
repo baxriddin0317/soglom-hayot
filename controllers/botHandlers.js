@@ -34,16 +34,29 @@ class BotHandlers {
     
     // Callback query handler
     this.bot.action(/^(taken|missed)_(.+)$/, this.handlePillConfirmation.bind(this));
+    this.bot.action(/^confirm_delete_prescription$/, this.handleConfirmDeletePrescription.bind(this));
+    this.bot.action(/^cancel_delete_prescription$/, this.handleCancelDeletePrescription.bind(this));
   }
 
   // Asosiy menyu
-  getMainMenu() {
+  getMainMenu(includeAdd = true) {
+    const firstRow = includeAdd ? ["💊 Yangi retsept qo'shish", "📋 Mening dorilarim"] : ["📋 Mening dorilarim"];
     return Markup.keyboard([
-      ["💊 Yangi retsept qo'shish", "📋 Mening dorilarim"],
+      firstRow,
       ["⏰ Eslatmalar", "📊 Kunlik hisobot"],
       ["🧾 Kasallik tarixi"],
       ["ℹ️ Biz haqida", "⚙️ Sozlamalar"]
     ]).resize();
+  }
+
+  async sendMainMenu(ctx, text = "Asosiy menyu") {
+    try {
+      const user = await DatabaseService.findOrCreateUser(ctx.from);
+      const presc = await DatabaseService.getActivePrescription(user._id);
+      ctx.reply(text, this.getMainMenu(!presc));
+    } catch (e) {
+      ctx.reply(text, this.getMainMenu());
+    }
   }
 
   // Dori qo'shish menyusi
@@ -134,7 +147,8 @@ Boshlash uchun quyidagi tugmalardan birini tanlang:
       }
     }
     
-    ctx.reply(welcomeMessage, this.getMainMenu());
+    const activePrescription = await DatabaseService.getActivePrescription(user._id);
+    ctx.reply(welcomeMessage, this.getMainMenu(!activePrescription));
     
     // Birinchi marta kelgan foydalanuvchi uchun
     if (user.isFirstTime) {
@@ -152,35 +166,42 @@ Boshlash uchun quyidagi tugmalardan birini tanlang:
       data: {}
     });
     
-    ctx.reply("🗓️ Davolanish necha kun davom etadi? (masalan: 7)", this.getAddPillMenu());
+    ctx.reply("🗓️ Davolanish nomi? (masalan: Gripp uchun)", this.getAddPillMenu());
   }
 
   // "Mening dorilarim" tugmasi
   async handleMyPills(ctx) {
     const user = await DatabaseService.findOrCreateUser(ctx.from);
     const pills = await DatabaseService.getUserPills(user._id);
+    const activePrescription = await DatabaseService.getActivePrescription(user._id);
     
     if (pills.length === 0) {
-      ctx.reply("📋 Hozircha dorilaringiz yo'q.\n\nYangi dori qo'shish uchun \"Yangi retsept qo'shish\" tugmasini bosing.", this.getMainMenu());
+      await this.sendMainMenu(ctx, "📋 Hozircha dorilaringiz yo'q.\n\nYangi dori qo'shish uchun \"Yangi retsept qo'shish\" tugmasini bosing.");
       return;
     }
     
     let message = "📋 Sizning dorilaringiz:\n\n";
     pills.forEach((pill, index) => {
+      const course = pill.courseId;
+      const courseTitle = course ? (course.name || `Retsept #${(index + 1)}`) : "Retseptsiz";
+      const courseDuration = course ? `${course.startDate} → ${course.endDate}` : "-";
+      const pillDuration = pill.courseDays ? `${pill.courseDays} kun` : (course ? "Butun kurs" : "-");
       message += `${index + 1}. ${pill.name}\n`;
+      message += `   Retsept: ${courseTitle}\n`;
+      message += `   Davomiylik: ${pillDuration}${course ? ` (kurs: ${courseDuration})` : ""}\n`;
       message += `   Kunlik: ${pill.dosagePerDay} marta\n`;
       message += `   Vaqtlar: ${pill.times.join(", ")}\n\n`;
     });
     
-    message += "Dorini o'chirish yoki tahrirlash uchun dori raqamini yuboring:";
+    message += "Dorini boshqarish uchun dori raqamini yuboring:";
     
     // Raqam kutilayotgan holatni saqlaymiz
     usePillStore.getState().setPillState(user.telegramId, {
       step: "manage_select",
-      data: { pills }
+      data: { pills, courseId: activePrescription?._id || null, courseName: activePrescription?.name || '', courseStart: activePrescription?.startDate, courseEnd: activePrescription?.endDate }
     });
     
-    ctx.reply(message, Keyboards.getPillListMenu(pills));
+    ctx.reply(message, Keyboards.getPillListMenu(pills, !!activePrescription));
   }
 
   // "Eslatmalar" tugmasi
@@ -190,7 +211,7 @@ Boshlash uchun quyidagi tugmalardan birini tanlang:
     const histories = (await DatabaseService.getPillHistory(user._id, today)).filter(h => h.status !== 'cancelled');
     
     if (!histories || histories.length === 0) {
-      ctx.reply("⏰ Bugun uchun eslatmalar topilmadi.", this.getMainMenu());
+      await this.sendMainMenu(ctx, "⏰ Bugun uchun eslatmalar topilmadi.");
       return;
     }
     
@@ -200,7 +221,7 @@ Boshlash uchun quyidagi tugmalardan birini tanlang:
       const statusEmoji = h.status === "taken" ? "✅" : h.status === "missed" ? "❌" : "⏰";
       message += `${statusEmoji} ${h.scheduledTime} - ${h.pillId.name}\n`;
     }
-    ctx.reply(message, this.getMainMenu());
+    await this.sendMainMenu(ctx, message);
   }
 
   // "Kunlik hisobot" tugmasi
@@ -210,7 +231,7 @@ Boshlash uchun quyidagi tugmalardan birini tanlang:
     const stats = await DatabaseService.getDailyStats(user._id, today);
     
     if (stats.total === 0) {
-      ctx.reply("📊 Bugun hali hech qanday dori ichilmagan.", this.getMainMenu());
+      await this.sendMainMenu(ctx, "📊 Bugun hali hech qanday dori ichilmagan.");
       return;
     }
     
@@ -225,38 +246,47 @@ Boshlash uchun quyidagi tugmalardan birini tanlang:
       message += `${statusEmoji} ${history.scheduledTime} - ${history.pillId.name}\n`;
     });
     
-    ctx.reply(message, this.getMainMenu());
+    await this.sendMainMenu(ctx, message);
   }
 
-  // Kasallik tarixi (ichilgan dorilar) ro'yxati
+  // Kasallik tarixi (retsept kesimida, foydalanuvchi formati)
   async handleHistory(ctx) {
     const user = await DatabaseService.findOrCreateUser(ctx.from);
-    // Oxirgi 30 kun (MedicalHistory dan)
-    const today = new Date();
-    const start = new Date(today.getTime() - 29 * 24 * 60 * 60 * 1000);
-    const startDate = start.toISOString().split('T')[0];
-    const endDate = today.toISOString().split('T')[0];
-    const groupedDocs = await DatabaseService.getMedicalHistoryByDate(user._id, startDate, endDate);
-    const activePills = await DatabaseService.getUserPills(user._id);
-    
-    if ((!groupedDocs || groupedDocs.length === 0) && activePills.length === 0) {
-      ctx.reply("🧾 Tarix topilmadi.", this.getMainMenu());
+    const prescriptions = await DatabaseService.getCompletedPrescriptions(user._id);
+    if (!prescriptions || prescriptions.length === 0) {
+      await this.sendMainMenu(ctx, "🧾 Retseptlar tarixi topilmadi.");
       return;
     }
-    let message = `🧾 Oxirgi 30 kun tarixi (sana bo'yicha):\n\n`;
-    for (const day of groupedDocs) {
-      message += `📅 ${day.date}\n`;
-      const items = (day.items || []).sort((a,b) => a.time.localeCompare(b.time));
-      items.forEach(it => { message += `  ⏰ ${it.time} — ${it.name}\n`; });
+    const fmt = (iso) => {
+      // iso: YYYY-MM-DD -> DD.MM.YY
+      if (!iso) return '-';
+      const [y, m, d] = iso.split('-');
+      return `${d}.${m}.${String(y).slice(2)}`;
+    };
+    const diffDaysInclusive = (startIso, endIso) => {
+      const s = new Date(startIso);
+      const e = new Date(endIso);
+      const ms = e.getTime() - s.getTime();
+      return Math.floor(ms / (24 * 60 * 60 * 1000)) + 1;
+    };
+    let message = '';
+    for (let i = 0; i < prescriptions.length; i++) {
+      const presc = prescriptions[i];
+      const pills = await DatabaseService.getPillsByCourse(user._id, presc._id);
+      const totalDays = diffDaysInclusive(presc.startDate, presc.endDate);
+      message += `${i + 1}. ${presc.name || '-'} uchun davolanish vaqti: ${totalDays} kun (boshlanish sanasi ${fmt(presc.startDate)} tugash sanasi ${fmt(presc.endDate)})\n`;
+      message += `Dorilar:\n`;
+      if (!pills || pills.length === 0) {
+        message += `  1. (dorilar yo'q)\n`;
+      } else {
+        pills.forEach((p, idx) => {
+          const dtext = p.courseDays ? `${p.courseDays} kun` : 'butun kurs';
+          message += `  -${p.name} (${dtext}, ${p.dosagePerDay} mahal)\n`;
+        });
+      }
       message += `\n`;
     }
-    if (activePills.length > 0) {
-      message += `🔸 Hozirgi faol dorilar:\n`;
-      activePills.forEach(p => {
-        message += `  • ${p.name} — ${p.dosagePerDay} marta: ${p.times.join(', ')}\n`;
-      });
-    }
-    ctx.reply(message, this.getMainMenu());
+    await this.sendMainMenu(ctx, message.trim());
   }
 
   // "Biz haqida" tugmasi
@@ -325,15 +355,29 @@ Savollar uchun: @support_username
     }
 
     // Default: asosiy menyuga
-    ctx.reply("Asosiy menyu", this.getMainMenu());
+    (async () => {
+      try {
+        const user = await DatabaseService.findOrCreateUser(ctx.from);
+        const presc = await DatabaseService.getActivePrescription(user._id);
+        ctx.reply("Asosiy menyu", this.getMainMenu(!presc));
+      } catch (e) {
+        ctx.reply("Asosiy menyu", this.getMainMenu());
+      }
+    })();
   }
 
   // Asosiy menyuga qaytish: oqimlarni tozalab, bosh menyuni ko'rsatish
-  handleGoHome(ctx) {
+  async handleGoHome(ctx) {
     const telegramId = ctx.from.id;
     usePillStore.getState().removePillState(telegramId);
     useSettingsStore.getState().removeSettingsState(telegramId);
-    ctx.reply("Asosiy menyu", this.getMainMenu());
+    try {
+      const user = await DatabaseService.findOrCreateUser(ctx.from);
+      const presc = await DatabaseService.getActivePrescription(user._id);
+      ctx.reply("Asosiy menyu", this.getMainMenu(!presc));
+    } catch (e) {
+      ctx.reply("Asosiy menyu", this.getMainMenu());
+    }
   }
 
   async handleReminderSettings(ctx) {
@@ -371,10 +415,23 @@ Savollar uchun: @support_username
     // Dori boshqarish oqimi
     if (pillState && pillState.step === 'manage_select') {
       const text = ctx.message.text.trim();
+      if (text === '📝 Retseptni tahrirlash') {
+        const cid = pillState.data.courseId;
+        if (!cid) {
+          ctx.reply("❌ Faol retsept topilmadi.", Keyboards.getPillListMenu(pillState.data.pills || [], false));
+          return;
+        }
+        const courseName = pillState.data.courseName || 'Nomlanmagan';
+        const courseStart = pillState.data.courseStart;
+        const courseEnd = pillState.data.courseEnd;
+        usePillStore.getState().updatePillState(user.telegramId, { step: 'edit_prescription_menu' });
+        ctx.reply(`Retsept: ${courseName} (${courseStart} → ${courseEnd})\nNimani tahrirlaymiz?`, Keyboards.getPrescriptionEditMenu());
+        return;
+      }
       const pills = pillState.data.pills || [];
       const idx = parseInt(text) - 1;
       if (isNaN(idx) || idx < 0 || idx >= pills.length) {
-        ctx.reply("❌ Iltimos ro'yxatdan to'g'ri raqam yuboring.", Keyboards.getPillListMenu(pills));
+        ctx.reply("❌ Iltimos ro'yxatdan to'g'ri raqam yuboring.", Keyboards.getPillListMenu(pills, !!pillState.data.courseId));
         return;
       }
       const selected = pills[idx];
@@ -382,7 +439,12 @@ Savollar uchun: @support_username
         step: 'manage_action',
         data: { ...pillState.data, selectedPill: selected }
       });
-      ctx.reply(`Tanlandi: ${selected.name}. Nima qilamiz?`, Keyboards.getPillManageMenu());
+      const course = selected.courseId;
+      const courseTitle = course ? (course.name || "Retsept") : "Retseptsiz";
+      const courseDuration = course ? `${course.startDate} → ${course.endDate}` : "-";
+      const pillDuration = selected.courseDays ? `${selected.courseDays} kun` : (course ? "Butun kurs" : "-");
+      const info = `Tanlandi: ${selected.name}\nRetsept: ${courseTitle}${course ? ` (${courseDuration})` : ""}\nDavomiylik: ${pillDuration}`;
+      ctx.reply(`${info}\n\nNima qilamiz?`, Keyboards.getPillManageMenu());
       return;
     }
 
@@ -392,7 +454,7 @@ Savollar uchun: @support_username
       if (text === "🗑️ O'chirish") {
         await DatabaseService.deletePill(pill._id);
         usePillStore.getState().removePillState(user.telegramId);
-        ctx.reply("🗑️ Dori o'chirildi.", this.getMainMenu());
+        await this.sendMainMenu(ctx, "🗑️ Dori o'chirildi.");
         return;
       }
       if (text === "✏️ Tahrirlash") {
@@ -402,6 +464,20 @@ Savollar uchun: @support_username
           data: { name: pill.name, dosagePerDay: pill.dosagePerDay, times: pill.times, pillId: pill._id }
         });
         ctx.reply(`Qaysi parametrni tahrirlaymiz?`, Keyboards.getPillEditMenu());
+        return;
+      }
+      if (text === "📝 Retseptni tahrirlash") {
+        const full = await DatabaseService.getPillById(pill._id);
+        if (!full || !full.courseId) {
+          ctx.reply("❌ Ushbu dori retseptga bog'lanmagan.", Keyboards.getPillManageMenu());
+          return;
+        }
+        const course = await DatabaseService.getPrescriptionById(full.courseId);
+        usePillStore.getState().updatePillState(user.telegramId, {
+          step: 'edit_prescription_menu',
+          data: { ...pillState.data, courseId: course._id, courseName: course.name || '', courseStart: course.startDate, courseEnd: course.endDate }
+        });
+        ctx.reply(`Retsept: ${course.name || 'Nomlanmagan'} (${course.startDate} → ${course.endDate})\nNimani tahrirlaymiz?`, Keyboards.getPrescriptionEditMenu());
         return;
       }
       ctx.reply("❌ Noto'g'ri buyruq. Tahrirlash yoki O'chirishni tanlang.", Keyboards.getPillManageMenu());
@@ -430,11 +506,52 @@ Savollar uchun: @support_username
       return;
     }
 
+    // Retsept tahrirlash menyusi
+    if (pillState && pillState.step === 'edit_prescription_menu') {
+      const text = ctx.message.text.trim();
+      if (text === '📝 Nomi') {
+        usePillStore.getState().updatePillState(user.telegramId, { step: 'edit_prescription_name' });
+        ctx.reply(`✏️ Yangi retsept nomini kiriting (hozirgi: ${pillState.data.courseName || '-'}):`, this.getAddPillMenu());
+        return;
+      }
+      if (text === '📅 Davomiyligi (kun)') {
+        usePillStore.getState().updatePillState(user.telegramId, { step: 'edit_prescription_days' });
+        ctx.reply(`📅 Yangi davomiylikni kiriting (kun):`, this.getAddPillMenu());
+        return;
+      }
+      if (text === "🗑️ Retseptni o'chirish") {
+        usePillStore.getState().updatePillState(user.telegramId, { step: 'confirm_delete_prescription' });
+        ctx.reply("❗ Ushbu retsept va unga bog'liq barcha dorilar o'chiriladi. Tasdiqlaysizmi?", Keyboards.getConfirmationMenu('delete_prescription'));
+        return;
+      }
+      ctx.reply(`❌ Qaysi parametr tahrirlanishini tanlang.`, Keyboards.getPrescriptionEditMenu());
+      return;
+    }
+
+    if (pillState && pillState.step === 'edit_prescription_name') {
+      const name = ctx.message.text.trim();
+      const updated = await DatabaseService.updatePrescription(pillState.data.courseId, { name });
+      usePillStore.getState().removePillState(user.telegramId);
+      await this.sendMainMenu(ctx, `✅ Retsept nomi yangilandi: ${updated.name || '-'}`);
+      return;
+    }
+
+    if (pillState && pillState.step === 'edit_prescription_days') {
+      const days = parseInt(ctx.message.text.trim());
+      if (isNaN(days) || days < 1 || days > 365) {
+        ctx.reply("❌ 1–365 oralig'ida kiriting.", this.getAddPillMenu());
+        return;
+      }
+      const updated = await DatabaseService.updatePrescriptionDays(pillState.data.courseId, days);
+      usePillStore.getState().removePillState(user.telegramId);
+      await this.sendMainMenu(ctx, `✅ Retsept davomiyligi yangilandi: ${updated.startDate} → ${updated.endDate}`);
+      return;
+    }
     if (pillState && pillState.step === 'edit_name') {
       const name = ctx.message.text.trim();
       const updated = await DatabaseService.updatePill(pillState.data.pillId, { name });
       usePillStore.getState().removePillState(user.telegramId);
-      ctx.reply(`✅ Nomi yangilandi: ${updated.name}`, this.getMainMenu());
+      await this.sendMainMenu(ctx, `✅ Nomi yangilandi: ${updated.name}`);
       return;
     }
 
@@ -510,7 +627,7 @@ Savollar uchun: @support_username
       message += `💊 Nomi: ${updated.name}\n`;
       message += `📅 Kunlik: ${updated.dosagePerDay} marta\n`;
       message += `⏰ Vaqtlar: ${updated.times.join(", ")}\n\n`;
-      ctx.reply(message, this.getMainMenu());
+      await this.sendMainMenu(ctx, message);
       return;
     }
     
@@ -549,6 +666,13 @@ Savollar uchun: @support_username
     const text = ctx.message.text;
     
     if (pillState.step === "course_days") {
+      const name = text.trim();
+      usePillStore.getState().updatePillState(user.telegramId, {
+        step: "course_days_number",
+        data: { name }
+      });
+      ctx.reply("🗓️ Davolanish necha kun davom etadi? (masalan: 7)", this.getAddPillMenu());
+    } else if (pillState.step === "course_days_number") {
       const days = parseInt(text);
       if (isNaN(days) || days < 1 || days > 365) {
         ctx.reply("❌ 1–365 oralig'ida kiriting:", this.getAddPillMenu());
@@ -556,7 +680,7 @@ Savollar uchun: @support_username
       }
       usePillStore.getState().updatePillState(user.telegramId, {
         step: "course_pill_count",
-        data: { days, totalPills: 0, pillsPlanned: 0 }
+        data: { ...pillState.data, days, totalPills: 0, pillsPlanned: 0 }
       });
       ctx.reply("💊 Retseptda nech ta dori bo'ladi? (masalan: 2)", this.getAddPillMenu());
     } else if (pillState.step === "course_pill_count") {
@@ -565,7 +689,7 @@ Savollar uchun: @support_username
         ctx.reply("❌ 1–20 oralig'ida kiriting:", this.getAddPillMenu());
         return;
       }
-      const course = await DatabaseService.createPrescription(user._id, pillState.data.days, count);
+      const course = await DatabaseService.createPrescription(user._id, pillState.data.days, count, pillState.data.name || "");
       usePillStore.getState().updatePillState(user.telegramId, {
         step: "pill_name",
         data: { ...pillState.data, totalPills: count, courseId: course._id, startDate: course.startDate, endDate: course.endDate }
@@ -580,10 +704,36 @@ Savollar uchun: @support_username
       
       usePillStore.getState().updatePillState(user.telegramId, {
         data: { ...pillState.data, name: text },
-        step: "dosage_per_day"
+        step: "pill_duration"
       });
       
-      ctx.reply(`💊 Dori nomi: ${text}\n\nKuniga necha marta ichish kerak? (masalan: 3)`, this.getAddPillMenu());
+      const courseInfo = pillState.data.days ? ` (kurs: ${pillState.data.days} kun)` : "";
+      ctx.reply(`💊 Dori nomi: ${text}${courseInfo}\n\nQabul qilish davomiyligi? Raqam kiriting (kun) yoki \"♾️ Butun kurs davomida\" ni tanlang.`, Keyboards.getPillDurationMenu());
+      
+    } else if (pillState.step === "pill_duration") {
+      if (text === "♾️ Butun kurs davomida") {
+        usePillStore.getState().updatePillState(user.telegramId, {
+          data: { ...pillState.data, courseDays: null },
+          step: "dosage_per_day"
+        });
+        ctx.reply(`Kuniga necha marta ichish kerak? (masalan: 3)`, this.getAddPillMenu());
+        return;
+      }
+      const pdays = parseInt(text);
+      const maxDays = pillState.data.days || 365;
+      if (isNaN(pdays) || pdays < 1) {
+        ctx.reply(`❌ 1–${maxDays} oralig'ida kiriting yoki ♾️ ni tanlang.`, Keyboards.getPillDurationMenu());
+        return;
+      }
+      if (pdays > maxDays) {
+        ctx.reply(`❌ Retsept davomiyligi ${maxDays} kun. ${maxDays} dan katta bo'lmasin.`, Keyboards.getPillDurationMenu());
+        return;
+      }
+      usePillStore.getState().updatePillState(user.telegramId, {
+        data: { ...pillState.data, courseDays: pdays },
+        step: "dosage_per_day"
+      });
+      ctx.reply(`Kuniga necha marta ichish kerak? (masalan: 3)`, this.getAddPillMenu());
       
     } else if (pillState.step === "dosage_per_day") {
       if (text === "🔙 Asosiy menyu") {
@@ -688,7 +838,7 @@ Savollar uchun: @support_username
         ctx.reply(`${message}\n\nYana ${remaining} ta dori kiritiladi. Keyingi dori nomini kiriting:`, this.getAddPillMenu());
       } else {
         usePillStore.getState().removePillState(user.telegramId);
-        ctx.reply(`${message}\n\nRetsept yakunlandi. Davolanish: ${pillState.data.startDate} → ${pillState.data.endDate}`, this.getMainMenu());
+        await this.sendMainMenu(ctx, `${message}\n\nRetsept yakunlandi. Davolanish: ${pillState.data.startDate} → ${pillState.data.endDate}`);
       }
     }
   }
@@ -720,6 +870,26 @@ Savollar uchun: @support_username
       const pill = await DatabaseService.getPillById(history.pillId);
       await DatabaseService.appendMedicalHistory(user._id, pill._id, pill.name, date, time);
     }
+  }
+
+  async handleConfirmDeletePrescription(ctx) {
+    const user = await DatabaseService.findOrCreateUser(ctx.from);
+    const pillState = usePillStore.getState().getPillState(user.telegramId);
+    if (!pillState || !pillState.data?.courseId) {
+      await ctx.answerCbQuery("❌ Holat topilmadi");
+      return;
+    }
+    await DatabaseService.deletePrescription(pillState.data.courseId);
+    usePillStore.getState().removePillState(user.telegramId);
+    await ctx.answerCbQuery("🗑️ Retsept o'chirildi");
+    const hasActive = await DatabaseService.getActivePrescription(user._id);
+    await ctx.editMessageText("🗑️ Retsept va bog'liq dorilar o'chirildi.");
+      ctx.reply("Asosiy menyu", this.getMainMenu(!hasActive));
+  }
+
+  async handleCancelDeletePrescription(ctx) {
+    await ctx.answerCbQuery("Bekor qilindi");
+    // Faqat callback javobi; matnli oqim davom etadi
   }
 }
 

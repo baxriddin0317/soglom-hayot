@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 
 const prescriptionSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  name: { type: String, default: "" },
   startDate: { type: String, required: true }, // YYYY-MM-DD
   endDate: { type: String, required: true },   // YYYY-MM-DD
   pillCount: { type: Number, required: true },

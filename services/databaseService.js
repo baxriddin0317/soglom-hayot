@@ -42,7 +42,8 @@ class DatabaseService {
       name: pillData.name,
       dosagePerDay: pillData.dosagePerDay,
       times: pillData.times.sort(),
-      endDate: pillData.endDate || null
+      endDate: pillData.endDate || null,
+      courseDays: pillData.courseDays || null
     });
     return await pill.save();
   }
@@ -52,7 +53,8 @@ class DatabaseService {
     if (activeOnly) {
       query.isActive = true;
     }
-    return await Pill.find(query);
+    // Populate course info for displaying prescription name/duration
+    return await Pill.find(query).populate('courseId');
   }
 
   static async getPillById(pillId) {
@@ -166,16 +168,62 @@ class DatabaseService {
   }
 
   // Course (retsept) yaratish
-  static async createPrescription(userId, days, pillCount) {
+  static async createPrescription(userId, days, pillCount, name = "") {
     const start = new Date();
     const end = new Date(start.getTime() + (days - 1) * 24 * 60 * 60 * 1000);
     const doc = new Prescription({
       userId,
+      name,
       startDate: start.toISOString().split('T')[0],
       endDate: end.toISOString().split('T')[0],
       pillCount
     });
     return await doc.save();
+  }
+
+  static async getActivePrescription(userId) {
+    return await Prescription.findOne({ userId, status: 'active' });
+  }
+
+  static async getCompletedPrescriptions(userId) {
+    return await Prescription.find({ userId, status: 'completed' }).sort({ createdAt: -1 });
+  }
+
+  static async getPrescriptionById(id) {
+    return await Prescription.findById(id);
+  }
+
+  static async updatePrescription(id, updates) {
+    return await Prescription.findByIdAndUpdate(id, updates, { new: true });
+  }
+
+  static async updatePrescriptionDays(prescriptionId, newDays) {
+    const presc = await Prescription.findById(prescriptionId);
+    if (!presc) return null;
+    const start = new Date(presc.startDate);
+    const end = new Date(start.getTime() + (newDays - 1) * 24 * 60 * 60 * 1000);
+    presc.endDate = end.toISOString().split('T')[0];
+    await presc.save();
+    // Clamp related pill courseDays to not exceed newDays
+    await Pill.updateMany({ courseId: prescriptionId, courseDays: { $gt: newDays } }, { courseDays: newDays });
+    return presc;
+  }
+
+  static async deletePrescription(prescriptionId) {
+    const presc = await Prescription.findById(prescriptionId);
+    if (!presc) return null;
+    // Find all pills under this prescription
+    const pills = await Pill.find({ courseId: prescriptionId });
+    const pillIds = pills.map(p => p._id);
+    // Cancel pending reminders and delete pill histories, then delete pills
+    if (pillIds.length > 0) {
+      await PillHistory.updateMany({ pillId: { $in: pillIds }, status: 'pending' }, { status: 'cancelled', reminderSent: true });
+      await PillHistory.deleteMany({ pillId: { $in: pillIds } });
+      await Pill.deleteMany({ _id: { $in: pillIds } });
+    }
+    // Remove the prescription entirely so it won't appear in history
+    await Prescription.deleteOne({ _id: prescriptionId });
+    return presc;
   }
 
   static async completeEndedPrescriptions() {
@@ -187,6 +235,18 @@ class DatabaseService {
       await Pill.updateMany({ courseId: p._id, isActive: true }, { isActive: false });
     }
     return ended;
+  }
+
+  static async getUserPrescriptions(userId, includeCompleted = true) {
+    const query = { userId };
+    if (!includeCompleted) {
+      query.status = 'active';
+    }
+    return await Prescription.find(query).sort({ createdAt: -1 });
+  }
+
+  static async getPillsByCourse(userId, courseId) {
+    return await Pill.find({ userId, courseId });
   }
 
   // Bugungi kun uchun faqat kelajakdagi vaqtlar uchun pill history yaratish

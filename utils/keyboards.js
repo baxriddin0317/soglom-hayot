@@ -2,9 +2,10 @@ const { Markup } = require("telegraf");
 
 class Keyboards {
   // Asosiy menyu
-  static getMainMenu() {
+  static getMainMenu(includeAdd = true) {
+    const firstRow = includeAdd ? ["💊 Yangi retsept qo'shish", "📋 Mening dorilarim"] : ["📋 Mening dorilarim"];
     return Markup.keyboard([
-      ["💊 Yangi retsept qo'shish", "📋 Mening dorilarim"],
+      firstRow,
       ["⏰ Eslatmalar", "📊 Kunlik hisobot"],
       ["🧾 Kasallik tarixi"],
       ["ℹ️ Biz haqida", "⚙️ Sozlamalar"],
@@ -15,6 +16,14 @@ class Keyboards {
   // Dori qo'shish menyusi
   static getAddPillMenu() {
     return Markup.keyboard([
+      ["🔙 Orqaga"]
+    ]).resize();
+  }
+
+  // Dori davomiyligi tanlash menyusi
+  static getPillDurationMenu() {
+    return Markup.keyboard([
+      ["♾️ Butun kurs davomida"],
       ["🔙 Orqaga"]
     ]).resize();
   }
@@ -40,9 +49,13 @@ class Keyboards {
   }
 
   // Dori ro'yxati menyusi
-  static getPillListMenu(pills) {
-    // Raqamlarni foydalanuvchi qo'lda kiritadi; faqat navigatsiya tugmalari ko'rsatiladi
-    return Markup.keyboard([["🔙 Orqaga"]]).resize();
+  static getPillListMenu(pills, includePrescriptionEdit = false) {
+    const rows = [];
+    if (includePrescriptionEdit) {
+      rows.push(["📝 Retseptni tahrirlash"]);
+    }
+    rows.push(["🔙 Orqaga"]);
+    return Markup.keyboard(rows).resize();
   }
 
   // Dori boshqaruv menyusi
@@ -56,8 +69,16 @@ class Keyboards {
   // Dori tahrirlash menyusi
   static getPillEditMenu() {
     return Markup.keyboard([
-      ["📝 Nomi", "🔢 Kunilik miqdor"],
+      ["📝 Nomi", "🔢 Kuniga marta"],
       ["⏰ Vaqtlar"],
+      ["🔙 Orqaga"]
+    ]).resize();
+  }
+
+  static getPrescriptionEditMenu() {
+    return Markup.keyboard([
+      ["📝 Nomi", "📅 Davomiyligi (kun)"],
+      ["🗑️ Retseptni o'chirish"],
       ["🔙 Orqaga"]
     ]).resize();
   }

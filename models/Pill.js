@@ -9,6 +9,7 @@ const pillSchema = new mongoose.Schema({
   isActive: { type: Boolean, default: true },
   startDate: { type: Date, default: Date.now },
   endDate: Date,
+  courseDays: { type: Number, default: null }, // agar null bo'lsa, butun kurs davomida
   createdAt: { type: Date, default: Date.now }
 });
 
