@@ -15,7 +15,8 @@ class DatabaseService {
         firstName: telegramUser.first_name,
         lastName: telegramUser.last_name || "",
         username: telegramUser.username || "",
-        isFirstTime: true
+        isFirstTime: true,
+        timezone: 'Asia/Tashkent'
       });
       await user.save();
     } else {
@@ -134,8 +135,8 @@ class DatabaseService {
   }
 
   // Kunlik pill history yaratish
-  static async createDailyPillHistory() {
-    const today = new Date().toISOString().split('T')[0];
+  static async createDailyPillHistory(dateOverride = null) {
+    const today = dateOverride || new Date().toISOString().split('T')[0];
     const activePills = await Pill.find({ isActive: true }).populate('userId');
     
     const results = [];

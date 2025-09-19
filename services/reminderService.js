@@ -12,22 +12,25 @@ class ReminderService {
   }
 
   setupCronJobs() {
-    // Har soat boshida: shu soat ichidagi eslatmalarni (masalan 14:00, 14:30 ...) rejalashtirish
-    cron.schedule('0 * * * *', this.scheduleHourlyReminders.bind(this));
-    // Har soat oxirida: yuborilmay qolganlarni yakuniy tekshirish (dupning oldi uchun reminderSent flag bor)
-    cron.schedule('59 * * * *', this.finalizeHourlyReminders.bind(this));
+    // Asia/Tashkent bo'yicha ishlash uchun timezone qo'shamiz
+    const tz = 'Asia/Tashkent';
+    // Har soat boshida: shu soat ichidagi eslatmalarni rejalashtirish
+    cron.schedule('0 * * * *', this.scheduleHourlyReminders.bind(this), { timezone: tz });
+    // Har soat oxirida: yuborilmay qolganlarni yakuniy tekshirish
+    cron.schedule('59 * * * *', this.finalizeHourlyReminders.bind(this), { timezone: tz });
     // Har kuni 00:02 da tugagan retseptlarni yakunlash va pillarni faol emasga o'tkazish
-    cron.schedule('2 0 * * *', this.completeEndedCourses.bind(this));
-    
+    cron.schedule('2 0 * * *', this.completeEndedCourses.bind(this), { timezone: tz });
     // Har kuni ertalab 00:01 da bugungi kun uchun pill history yaratish
-    cron.schedule('1 0 * * *', this.createDailyPillHistory.bind(this));
+    cron.schedule('1 0 * * *', this.createDailyPillHistory.bind(this), { timezone: tz });
   }
 
   // Shu soat uchun eslatmalarni rejalashtirish
   async scheduleHourlyReminders() {
+    // Jadval server vaqtiga bog'liq bo'lmasligi uchun Asia/Tashkent ni asos qilamiz
     const now = new Date();
-    const today = now.toISOString().split('T')[0];
-    const hour = now.toTimeString().slice(0, 2); // "HH"
+    const tzNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
+    const today = tzNow.toISOString().split('T')[0];
+    const hour = tzNow.toTimeString().slice(0, 2); // "HH"
 
     // Oldingi timeoutlarni tozalash
     for (const t of this.currentHourTimeouts) {
@@ -42,10 +45,10 @@ class ReminderService {
 
       for (const history of histories) {
         const [h, m] = history.scheduledTime.split(':').map(Number);
-        const target = new Date(now);
+        const target = new Date(tzNow);
         target.setHours(h, m, 0, 0);
 
-        const delayMs = target.getTime() - now.getTime();
+        const delayMs = target.getTime() - tzNow.getTime();
 
         if (delayMs <= 0) {
           // Agar vaqt allaqachon o'tib ketgan bo'lsa, darhol yuboramiz
@@ -67,8 +70,9 @@ class ReminderService {
   // Soat oxirida yuborilmay qolgan pendinglarni tekshirish va yuborish
   async finalizeHourlyReminders() {
     const now = new Date();
-    const today = now.toISOString().split('T')[0];
-    const hour = now.toTimeString().slice(0, 2); // joriy soat
+    const tzNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
+    const today = tzNow.toISOString().split('T')[0];
+    const hour = tzNow.toTimeString().slice(0, 2); // joriy soat
     try {
       const histories = await DatabaseService.getPendingRemindersForHour(hour, today);
       for (const history of histories) {
@@ -83,8 +87,9 @@ class ReminderService {
   // Eslatmalarni tekshirish va yuborish
   async checkReminders() {
     const now = new Date();
-    const currentTime = now.toTimeString().slice(0, 5); // "HH:MM" format
-    const today = now.toISOString().split('T')[0];
+    const tzNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
+    const currentTime = tzNow.toTimeString().slice(0, 5); // "HH:MM" format
+    const today = tzNow.toISOString().split('T')[0];
     
     console.log(`🔍 Eslatmalar tekshirilmoqda: ${currentTime}`);
     
@@ -131,9 +136,11 @@ class ReminderService {
   // Kunlik pill history yaratish
   async createDailyPillHistory() {
     console.log('🌅 Yangi kun - pill history yaratilmoqda...');
-    
     try {
-      const results = await DatabaseService.createDailyPillHistory();
+      const now = new Date();
+      const tzNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tashkent' }));
+      const today = tzNow.toISOString().split('T')[0];
+      const results = await DatabaseService.createDailyPillHistory(today);
       console.log(`✅ ${results.length} ta pill history yaratildi`);
     } catch (error) {
       console.error('❌ Kunlik pill history yaratishda xatolik:', error);
