@@ -148,11 +148,11 @@ Boshlash uchun quyidagi tugmalardan birini tanlang:
     
     // Store ga dori qo'shish holatini saqlash
     usePillStore.getState().setPillState(user.telegramId, {
-      step: "pill_name",
+      step: "course_days",
       data: {}
     });
     
-    ctx.reply("💊 Yangi dori qo'shish\n\nDori nomini kiriting:", this.getAddPillMenu());
+    ctx.reply("🗓️ Davolanish necha kun davom etadi? (masalan: 7)", this.getAddPillMenu());
   }
 
   // "Mening dorilarim" tugmasi
@@ -548,7 +548,30 @@ Savollar uchun: @support_username
     
     const text = ctx.message.text;
     
-    if (pillState.step === "pill_name") {
+    if (pillState.step === "course_days") {
+      const days = parseInt(text);
+      if (isNaN(days) || days < 1 || days > 365) {
+        ctx.reply("❌ 1–365 oralig'ida kiriting:", this.getAddPillMenu());
+        return;
+      }
+      usePillStore.getState().updatePillState(user.telegramId, {
+        step: "course_pill_count",
+        data: { days, totalPills: 0, pillsPlanned: 0 }
+      });
+      ctx.reply("💊 Retseptda nech ta dori bo'ladi? (masalan: 2)", this.getAddPillMenu());
+    } else if (pillState.step === "course_pill_count") {
+      const count = parseInt(text);
+      if (isNaN(count) || count < 1 || count > 20) {
+        ctx.reply("❌ 1–20 oralig'ida kiriting:", this.getAddPillMenu());
+        return;
+      }
+      const course = await DatabaseService.createPrescription(user._id, pillState.data.days, count);
+      usePillStore.getState().updatePillState(user.telegramId, {
+        step: "pill_name",
+        data: { ...pillState.data, totalPills: count, courseId: course._id, startDate: course.startDate, endDate: course.endDate }
+      });
+      ctx.reply("💊 Yangi dori\n\nDori nomini kiriting:", this.getAddPillMenu());
+    } else if (pillState.step === "pill_name") {
       if (text === "🔙 Asosiy menyu") {
         usePillStore.getState().removePillState(user.telegramId);
         ctx.reply("Asosiy menyuga qaytdingiz", this.getMainMenu());
@@ -649,15 +672,24 @@ Savollar uchun: @support_username
         finalData.times
       );
       
-      usePillStore.getState().removePillState(user.telegramId);
-      
       let message = `✅ Dori muvaffaqiyatli qo'shildi!\n\n`;
       message += `💊 Nomi: ${pill.name}\n`;
       message += `📅 Kunlik: ${pill.dosagePerDay} marta\n`;
       message += `⏰ Vaqtlar: ${pill.times.join(", ")}\n\n`;
       message += `Eslatmalar avtomatik ravishda yuboriladi.`;
-      
-      ctx.reply(message, this.getMainMenu());
+
+      const planned = (pillState.data.pillsPlanned || 0) + 1;
+      const remaining = (pillState.data.totalPills || 1) - planned;
+      if (remaining > 0) {
+        usePillStore.getState().updatePillState(user.telegramId, {
+          step: "pill_name",
+          data: { ...pillState.data, pillsPlanned: planned }
+        });
+        ctx.reply(`${message}\n\nYana ${remaining} ta dori kiritiladi. Keyingi dori nomini kiriting:`, this.getAddPillMenu());
+      } else {
+        usePillStore.getState().removePillState(user.telegramId);
+        ctx.reply(`${message}\n\nRetsept yakunlandi. Davolanish: ${pillState.data.startDate} → ${pillState.data.endDate}`, this.getMainMenu());
+      }
     }
   }
 

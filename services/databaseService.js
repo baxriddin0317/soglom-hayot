@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const { Pill, PillHistory } = require('../models/Pill');
 const MedicalHistory = require('../models/MedicalHistory');
+const Prescription = require('../models/Prescription');
 
 class DatabaseService {
   // Foydalanuvchi bilan ishlash
@@ -37,9 +38,11 @@ class DatabaseService {
   static async createPill(userId, pillData) {
     const pill = new Pill({
       userId,
+      courseId: pillData.courseId,
       name: pillData.name,
       dosagePerDay: pillData.dosagePerDay,
-      times: pillData.times.sort()
+      times: pillData.times.sort(),
+      endDate: pillData.endDate || null
     });
     return await pill.save();
   }
@@ -160,6 +163,30 @@ class DatabaseService {
     }
     
     return results;
+  }
+
+  // Course (retsept) yaratish
+  static async createPrescription(userId, days, pillCount) {
+    const start = new Date();
+    const end = new Date(start.getTime() + (days - 1) * 24 * 60 * 60 * 1000);
+    const doc = new Prescription({
+      userId,
+      startDate: start.toISOString().split('T')[0],
+      endDate: end.toISOString().split('T')[0],
+      pillCount
+    });
+    return await doc.save();
+  }
+
+  static async completeEndedPrescriptions() {
+    const today = new Date().toISOString().split('T')[0];
+    const ended = await Prescription.find({ status: 'active', endDate: { $lt: today } });
+    for (const p of ended) {
+      p.status = 'completed';
+      await p.save();
+      await Pill.updateMany({ courseId: p._id, isActive: true }, { isActive: false });
+    }
+    return ended;
   }
 
   // Bugungi kun uchun faqat kelajakdagi vaqtlar uchun pill history yaratish

@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 
 const pillSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  courseId: { type: mongoose.Schema.Types.ObjectId, ref: "Prescription" },
   name: { type: String, required: true },
   dosagePerDay: { type: Number, required: true },
   times: [{ type: String, required: true }], // e.g. ["08:00", "13:00", "20:00"]

@@ -16,6 +16,8 @@ class ReminderService {
     cron.schedule('0 * * * *', this.scheduleHourlyReminders.bind(this));
     // Har soat oxirida: yuborilmay qolganlarni yakuniy tekshirish (dupning oldi uchun reminderSent flag bor)
     cron.schedule('59 * * * *', this.finalizeHourlyReminders.bind(this));
+    // Har kuni 00:02 da tugagan retseptlarni yakunlash va pillarni faol emasga o'tkazish
+    cron.schedule('2 0 * * *', this.completeEndedCourses.bind(this));
     
     // Har kuni ertalab 00:01 da bugungi kun uchun pill history yaratish
     cron.schedule('1 0 * * *', this.createDailyPillHistory.bind(this));
@@ -156,6 +158,21 @@ class ReminderService {
   // Bugungi eslatmalarni olish
   async getTodaysReminders(userId) {
     return await DatabaseService.getTodaysPillHistory(userId);
+  }
+
+  async completeEndedCourses() {
+    try {
+      const ended = await DatabaseService.completeEndedPrescriptions();
+      if (ended.length > 0) {
+        for (const course of ended) {
+          // Istasak: foydalanuvchiga kurs yakunlangani haqida xabar yuborish
+          // Bu yerda course.userId ni populate qilmaganimiz uchun xabar yuborishni hozircha o'tkazamiz
+        }
+        console.log(`🏁 ${ended.length} ta retsept yakunlandi`);
+      }
+    } catch (e) {
+      console.error('❌ Retseptlarni yakunlashda xatolik:', e);
+    }
   }
 }
 
