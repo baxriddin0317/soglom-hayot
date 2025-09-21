@@ -181,18 +181,18 @@ Boshlash uchun quyidagi tugmalardan birini tanlang:
     }
     
     let message = "📋 Sizning dorilaringiz:\n\n";
+    const courseTitle = activePrescription ? (activePrescription.name || `Retsept #${(index + 1)}`) : "Retseptsiz";
+    if (activePrescription) {
+      message += `   Retsept: ${courseTitle}\n`;
+    }
     pills.forEach((pill, index) => {
       const course = pill.courseId;
-      const courseTitle = course ? (course.name || `Retsept #${(index + 1)}`) : "Retseptsiz";
       const courseDuration = course ? `${course.startDate} → ${course.endDate}` : "-";
       const pillDuration = pill.courseDays ? `${pill.courseDays} kun` : (course ? "Butun kurs" : "-");
       
       message += `${index + 1}. ${pill.name}\n`;
-      if (course) {
-        message += `   Retsept: ${courseTitle}\n`;
-        message += `   Davomiylik: ${pillDuration} (kurs: ${courseDuration})\n`;
-      }
       message += `   Kunlik: ${pill.dosagePerDay} marta\n`;
+      message += `   Davomiylik: ${pillDuration} (kurs: ${courseDuration})\n`;
       message += `   Vaqtlar: ${pill.times.join(", ")}\n\n`;
     });
     
