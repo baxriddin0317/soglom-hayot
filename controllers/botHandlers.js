@@ -180,21 +180,28 @@ Boshlash uchun quyidagi tugmalardan birini tanlang:
       return;
     }
     
-    let message = "📋 Sizning dorilaringiz:\n\n";
-    const courseTitle = activePrescription ? (activePrescription.name || `Retsept #${(index + 1)}`) : "Retseptsiz";
-    if (activePrescription) {
-      message += `   Retsept: ${courseTitle}\n`;
-    }
-    pills.forEach((pill, index) => {
-      const course = pill.courseId;
-      const courseDuration = course ? `${course.startDate} → ${course.endDate}` : "-";
-      const pillDuration = pill.courseDays ? `${pill.courseDays} kun` : (course ? "Butun kurs" : "-");
-      
-      message += `${index + 1}. ${pill.name}\n`;
-      message += `   Kunlik: ${pill.dosagePerDay} marta\n`;
-      message += `   Davomiylik: ${pillDuration} (kurs: ${courseDuration})\n`;
-      message += `   Vaqtlar: ${pill.times.join(", ")}\n\n`;
-    });
+      let message = "📋 Sizning dorilaringiz:\n\n";
+      const courseTitle = activePrescription ? (activePrescription.name || `Retsept #${(index + 1)}`) : "Retseptsiz";
+      if (activePrescription) {
+        message += `   Retsept: ${courseTitle}\n`;
+        // Calculate total days for the prescription
+        const startDate = new Date(activePrescription.startDate);
+        const endDate = new Date(activePrescription.endDate);
+        const totalDays = Math.floor((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+        message += `   Davomiylik: ${totalDays} kun (${activePrescription.startDate} → ${activePrescription.endDate})\n`;
+      }
+      pills.forEach((pill, index) => {
+        const course = pill.courseId;
+        const startDate = new Date(course.startDate);
+        const endDate = new Date(course.endDate);
+        const totalDays = Math.floor((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+        const pillDuration = pill.courseDays ? `${pill.courseDays} kun` : (course ? "Butun kurs" : "-");
+        
+        message += `${index + 1}. ${pill.name}\n`;
+        message += `   Kunlik: ${pill.dosagePerDay} marta\n`;
+        message += `   Davomiylik: ${pillDuration} (kurs: ${totalDays})\n`;
+        message += `   Vaqtlar: ${pill.times.join(", ")}\n\n`;
+      });
     
     message += "Dorini boshqarish uchun dori raqamini yuboring:";
     
