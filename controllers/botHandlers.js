@@ -186,9 +186,12 @@ Boshlash uchun quyidagi tugmalardan birini tanlang:
       const courseTitle = course ? (course.name || `Retsept #${(index + 1)}`) : "Retseptsiz";
       const courseDuration = course ? `${course.startDate} → ${course.endDate}` : "-";
       const pillDuration = pill.courseDays ? `${pill.courseDays} kun` : (course ? "Butun kurs" : "-");
+      
       message += `${index + 1}. ${pill.name}\n`;
-      message += `   Retsept: ${courseTitle}\n`;
-      message += `   Davomiylik: ${pillDuration}${course ? ` (kurs: ${courseDuration})` : ""}\n`;
+      if (course) {
+        message += `   Retsept: ${courseTitle}\n`;
+        message += `   Davomiylik: ${pillDuration} (kurs: ${courseDuration})\n`;
+      }
       message += `   Kunlik: ${pill.dosagePerDay} marta\n`;
       message += `   Vaqtlar: ${pill.times.join(", ")}\n\n`;
     });
