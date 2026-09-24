@@ -1,0 +1,148 @@
+// Sog'lom Hayot — ma'lumotlar bazasi sxemasi (Supabase Postgres).
+//
+// Asosiy g'oya: retsept saqlanganda uning butun kursi uchun har bir doza (dori + sana + vaqt)
+// oldindan `Dose` jadvaliga yoziladi. Shunda eslatma yuborish — oddiy so'rov:
+// "vaqti kelgan, hali eslatilmagan dozalar". Server doimo ishlab turishi shart emas —
+// tashqi cron har daqiqada /api/cron/tick ni chaqiradi.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum PrescriptionStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum DoseStatus {
+  PENDING // hali belgilanmagan
+  TAKEN // ichildi
+  SKIPPED // foydalanuvchi o'zi "o'tkazib yubordim" dedi
+  MISSED // belgilanmadi — vaqti o'tib ketdi (avtomatik)
+}
+
+enum MealRelation {
+  ANY
+  BEFORE
+  WITH
+  AFTER
+}
+
+model User {
+  id           String  @id @default(cuid())
+  telegramId   BigInt  @unique
+  firstName    String  @default("")
+  lastName     String?
+  username     String?
+  languageCode String?
+
+  // IANA vaqt zonasi. Dozalarning aniq vaqti (scheduledAt) shu zona bo'yicha hisoblanadi.
+  timezone         String  @default("Asia/Tashkent")
+  remindersEnabled Boolean @default(true)
+  // Dori vaqtidan necha daqiqa oldin eslatish (0 = aynan vaqtida).
+  leadMinutes      Int     @default(0)
+  // Javob berilmasa necha daqiqadan keyin qayta eslatish (0 = qayta eslatmaslik).
+  followUpMinutes  Int     @default(30)
+
+  // Botdagi ko'p qadamli dialog holati (retsept kiritish va h.k.). Serverless'da xotira
+  // so'rovlar orasida saqlanmaydi, shuning uchun holat bazada turadi.
+  botState   Json?
+  // Foydalanuvchi botni bloklagan bo'lsa — eslatma yuborilmaydi.
+  blockedAt  DateTime?
+
+  lastActiveAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  prescriptions Prescription[]
+  medications   Medication[]
+  doses         Dose[]
+}
+
+model Prescription {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title  String
+  doctor String?
+  notes  String?
+
+  // Foydalanuvchi vaqt zonasidagi kalendar sanalari: "YYYY-MM-DD" (ikkalasi ham kiradi).
+  startDate String
+  endDate   String
+
+  status      PrescriptionStatus @default(ACTIVE)
+  completedAt DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  medications Medication[]
+
+  @@index([userId, status])
+  @@index([status, endDate])
+}
+
+model Medication {
+  id             String       @id @default(cuid())
+  prescriptionId String
+  prescription   Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name   String
+  // Bir martalik miqdor: "1 tabletka", "5 ml" ...
+  dosage String?
+  meal   MealRelation @default(ANY)
+  // Kunlik qabul vaqtlari, tartiblangan: ["08:00", "14:00", "20:00"].
+  times  String[]
+
+  // Dori retseptdan qisqaroq muddat ichilishi mumkin (masalan antibiotik 5 kun, kurs 10 kun).
+  startDate String
+  endDate   String
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  doses Dose[]
+
+  @@index([prescriptionId])
+  @@index([userId, isActive])
+}
+
+model Dose {
+  id           String     @id @default(cuid())
+  medicationId String
+  medication   Medication @relation(fields: [medicationId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Foydalanuvchi vaqtidagi sana va soat (ko'rsatish uchun) ...
+  date        String
+  time        String
+  // ... va aniq vaqt nuqtasi (UTC) — eslatmalar shu bo'yicha yuboriladi.
+  scheduledAt DateTime
+
+  status   DoseStatus @default(PENDING)
+  actedAt  DateTime?
+  // Eslatma yuborilgan / qayta eslatilgan vaqt. Cron ikki marta ishlasa ham takror xabar ketmasligi
+  // uchun avval shu maydon atomar "band qilinadi", keyin xabar yuboriladi.
+  remindedAt DateTime?
+  followUpAt DateTime?
+  // Eslatma xabari — tugma bosilganda / vaqt o'tganda shu xabar yangilanadi.
+  messageId  Int?
+
+  createdAt DateTime @default(now())
+
+  @@unique([medicationId, date, time])
+  @@index([status, scheduledAt])
+  @@index([userId, date])
+  @@index([userId, scheduledAt])
+}

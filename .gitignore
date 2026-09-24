@@ -1,3 +1,29 @@
+# dependencies
 /node_modules
 
-/.env
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# Prisma klienti `npm install` / `npm run build` paytida qayta yasaladi
+/lib/generated/
+
+# misc
+.DS_Store
+*.pem
+*.log
+
+# env files — MAXFIY, hech qachon commit qilinmaydi.
+# Faqat namuna fayl (.env.example) istisno.
+.env*
+!.env.example
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
