@@ -70,12 +70,13 @@ export async function getUserStats(user: User, periodDays: number, now = new Dat
   const [byDay, byMed] = await Promise.all([
     db.dose.groupBy({
       by: ['date', 'status'],
-      where: { userId: user.id, date: { gte: lookbackFrom, lte: today } },
+      // "Kerak bo'lganda" dorilari rejaga ega emas — rioya hisobiga kirmaydi.
+      where: { userId: user.id, date: { gte: lookbackFrom, lte: today }, medication: { asNeeded: false } },
       _count: { _all: true },
     }),
     db.dose.groupBy({
       by: ['medicationId', 'status'],
-      where: { userId: user.id, date: { gte: from, lte: today }, status: { not: 'PENDING' } },
+      where: { userId: user.id, date: { gte: from, lte: today }, status: { not: 'PENDING' }, medication: { asNeeded: false } },
       _count: { _all: true },
     }),
   ]);

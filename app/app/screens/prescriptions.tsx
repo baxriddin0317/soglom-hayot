@@ -3,10 +3,12 @@
 import type { PrescriptionSummary, PrescriptionsView } from '@/lib/webapp/types';
 import { formatDate, formatShort } from '@/lib/time';
 import { useApi } from '../api';
-import type { Nav } from '../mini-app';
+import { useNav, useT } from '../store';
 import { ErrorState, Icon, Loading, ProgressBar, pctClass } from '../ui';
 
-export function PrescriptionsScreen({ nav }: { nav: Nav }) {
+export function PrescriptionsScreen() {
+  const t = useT();
+  const nav = useNav();
   const { data, error, reload } = useApi<PrescriptionsView>('prescriptions');
   if (!data) return error ? <ErrorState message={error.message} onRetry={reload} /> : <Loading />;
 
@@ -15,15 +17,15 @@ export function PrescriptionsScreen({ nav }: { nav: Nav }) {
   return (
     <>
       <div className="page-head">
-        <div className="page-title">Retseptlar</div>
-        <div className="page-sub">Shifokor yozib bergan davolanish kurslari</div>
+        <div className="page-title">{t('app.rx.title')}</div>
+        <div className="page-sub">{t('app.rx.sub')}</div>
       </div>
 
       <div className="sec-title">
-        Faol
+        {t('app.rx.active')}
         {canAdd && data.active.length > 0 && (
           <button type="button" className="sec-link" onClick={nav.openNew}>
-            + Yangi
+            {t('app.rx.new')}
           </button>
         )}
       </div>
@@ -33,14 +35,12 @@ export function PrescriptionsScreen({ nav }: { nav: Nav }) {
             <div className="empty-ic">
               <Icon.tabRx />
             </div>
-            <div className="e-title">Faol retsept yo'q</div>
-            <div className="e-text">
-              Retseptdagi dorilar, kuniga necha marta va qaysi soatlarda ichilishini kiriting — qolganini bot eslatib turadi.
-            </div>
+            <div className="e-title">{t('app.rx.none')}</div>
+            <div className="e-text">{t('app.rx.noneText')}</div>
           </div>
           <div className="e-actions">
             <button className="btn" type="button" onClick={nav.openNew}>
-              <Icon.plus /> Retsept qo'shish
+              <Icon.plus /> {t('app.today.addRx')}
             </button>
           </div>
         </div>
@@ -51,15 +51,11 @@ export function PrescriptionsScreen({ nav }: { nav: Nav }) {
           ))}
         </div>
       )}
-      {!canAdd && (
-        <div className="sec-note">
-          Bir vaqtda ko'pi bilan {data.limit} ta faol retsept. Yangisini qo'shish uchun keraksizini yakunlang.
-        </div>
-      )}
+      {!canAdd && <div className="sec-note">{t('app.rx.limit', { n: data.limit })}</div>}
 
       {data.finished.length > 0 && (
         <>
-          <div className="sec-title">Tarix</div>
+          <div className="sec-title">{t('app.rx.history')}</div>
           <div className="card">
             {data.finished.map((p) => (
               <PrescriptionRow key={p.id} p={p} onOpen={() => nav.openPrescription(p.id)} />
@@ -72,12 +68,14 @@ export function PrescriptionsScreen({ nav }: { nav: Nav }) {
 }
 
 function PrescriptionRow({ p, onOpen }: { p: PrescriptionSummary; onOpen: () => void }) {
+  const t = useT();
   const active = p.status === 'ACTIVE';
+  const days = t('common.days', { n: p.totalDays });
   const status = !active
-    ? `${formatDate(p.startDate)} – ${formatDate(p.endDate)} · ${p.totalDays} kun`
+    ? t('app.rx.range', { from: formatDate(p.startDate), to: formatDate(p.endDate), days })
     : p.day === 0
-      ? `${formatShort(p.startDate)} dan boshlanadi · ${p.totalDays} kun`
-      : `${p.day}-kun / ${p.totalDays} · ${formatShort(p.endDate)} gacha`;
+      ? t('app.rx.startsOn', { date: formatShort(p.startDate), days })
+      : t('app.rx.dayOf', { day: p.day, total: p.totalDays, date: formatShort(p.endDate) });
   return (
     <div className="rx" onClick={onOpen} role="button">
       <div className="rx-head">

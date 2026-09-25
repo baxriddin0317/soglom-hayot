@@ -2,6 +2,7 @@ import { db } from '@/lib/db';
 import { AppError } from '@/lib/errors';
 import type { User } from '@/lib/generated/prisma/client';
 import { FOLLOW_UP_OPTIONS, LEAD_OPTIONS } from '@/lib/constants';
+import { isLang, t, type Lang } from '@/lib/i18n';
 import { isValidTimeZone } from '@/lib/time';
 import { rescheduleUserDoses } from '@/lib/services/prescriptions';
 
@@ -43,32 +44,37 @@ export interface SettingsPatch {
   remindersEnabled?: unknown;
   leadMinutes?: unknown;
   followUpMinutes?: unknown;
+  language?: unknown;
 }
 
 // Sozlamalarni tekshirib saqlaydi. Vaqt zonasi o'zgarsa kelajakdagi dozalar yangi zona
 // bo'yicha qayta hisoblanadi (aks holda eslatmalar eski zona soatida kelardi).
 export async function updateSettings(user: User, patch: SettingsPatch): Promise<User> {
-  const data: Partial<Pick<User, 'timezone' | 'remindersEnabled' | 'leadMinutes' | 'followUpMinutes'>> = {};
+  const data: Partial<Pick<User, 'timezone' | 'remindersEnabled' | 'leadMinutes' | 'followUpMinutes' | 'language'>> = {};
 
   if (patch.timezone !== undefined) {
     if (typeof patch.timezone !== 'string' || !isValidTimeZone(patch.timezone)) {
-      throw new AppError("Vaqt zonasi noto'g'ri. Masalan: Asia/Tashkent");
+      throw new AppError('err.tz');
     }
     data.timezone = patch.timezone;
   }
   if (patch.remindersEnabled !== undefined) {
-    if (typeof patch.remindersEnabled !== 'boolean') throw new AppError("Noto'g'ri qiymat");
+    if (typeof patch.remindersEnabled !== 'boolean') throw new AppError('err.value');
     data.remindersEnabled = patch.remindersEnabled;
   }
   if (patch.leadMinutes !== undefined) {
-    if (!(LEAD_OPTIONS as readonly unknown[]).includes(patch.leadMinutes)) throw new AppError("Noto'g'ri qiymat");
+    if (!(LEAD_OPTIONS as readonly unknown[]).includes(patch.leadMinutes)) throw new AppError('err.value');
     data.leadMinutes = patch.leadMinutes as number;
   }
   if (patch.followUpMinutes !== undefined) {
     if (!(FOLLOW_UP_OPTIONS as readonly unknown[]).includes(patch.followUpMinutes)) {
-      throw new AppError("Noto'g'ri qiymat");
+      throw new AppError('err.value');
     }
     data.followUpMinutes = patch.followUpMinutes as number;
+  }
+  if (patch.language !== undefined) {
+    if (!isLang(patch.language)) throw new AppError('err.lang');
+    data.language = patch.language;
   }
 
   const updated = await db.user.update({ where: { id: user.id }, data });
@@ -78,6 +84,33 @@ export async function updateSettings(user: User, patch: SettingsPatch): Promise<
   return updated;
 }
 
-export function displayName(user: Pick<User, 'firstName' | 'username'>): string {
-  return user.firstName || user.username || "do'stim";
+export function displayName(user: Pick<User, 'firstName' | 'username'>, lang: Lang = 'uz'): string {
+  return user.firstName || user.username || t(lang, 'name.friend');
+}
+
+// ---------------------------------------------------------------------------
+// Admin
+// ---------------------------------------------------------------------------
+
+// ADMIN_TELEGRAM_IDS="123456789,987654321" — adminlarning Telegram ID'lari (vergul bilan).
+export function adminIds(): bigint[] {
+  return (process.env.ADMIN_TELEGRAM_IDS ?? '')
+    .split(/[\s,;]+/)
+    .filter((s) => /^\d+$/.test(s))
+    .map((s) => BigInt(s));
+}
+
+/** Adminlik huquqi (faqat ADMIN_TELEGRAM_IDS bo'yicha — bazadagi maydonga ishonilmaydi). */
+export function isAdmin(user: Pick<User, 'telegramId'>): boolean {
+  return adminIds().includes(user.telegramId);
+}
+
+/** Admin menyusi ko'rinadimi: admin va admin rejimi yoqilgan. */
+export function inAdminMode(user: Pick<User, 'telegramId' | 'adminMode'>): boolean {
+  return user.adminMode && isAdmin(user);
+}
+
+export async function setAdminMode(user: User, on: boolean): Promise<User> {
+  if (!isAdmin(user)) throw new AppError('err.notAdmin', {}, 'forbidden');
+  return db.user.update({ where: { id: user.id }, data: { adminMode: on } });
 }

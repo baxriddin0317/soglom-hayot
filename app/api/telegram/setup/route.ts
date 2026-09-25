@@ -1,7 +1,21 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { TelegramError } from 'telegraf';
 import { getBot } from '@/lib/bot';
+import { t, type Key, type Lang } from '@/lib/i18n';
 import { hasCronSecret } from '@/lib/secrets';
+import { adminIds } from '@/lib/services/users';
+
+const COMMANDS: [string, Key][] = [
+  ['start', 'cmd.start'],
+  ['today', 'cmd.today'],
+  ['add', 'cmd.add'],
+  ['stock', 'cmd.stock'],
+  ['report', 'cmd.report'],
+  ['settings', 'cmd.settings'],
+  ['lang', 'cmd.lang'],
+  ['app', 'cmd.app'],
+  ['help', 'cmd.help'],
+];
 
 // Webhook, Mini App menyu tugmasi va buyruqlarni bir bosishda o'rnatish.
 // Deploydan keyin PRODUCTION domenda bir marta oching:
@@ -42,22 +56,26 @@ export async function GET(req: NextRequest) {
     });
     // Chat pastidagi menyu tugmasi Mini App'ni ochadi (barcha foydalanuvchilar uchun).
     await telegram.setChatMenuButton({
-      menuButton: { type: 'web_app', text: 'Ilova', web_app: { url: webAppUrl } },
+      menuButton: { type: 'web_app', text: t('uz', 'bot.menuButton'), web_app: { url: webAppUrl } },
     });
-    await telegram.setMyCommands([
-      { command: 'start', description: 'Asosiy menyu' },
-      { command: 'today', description: 'Bugungi dorilar' },
-      { command: 'add', description: "Yangi retsept qo'shish" },
-      { command: 'report', description: 'Hisobot' },
-      { command: 'settings', description: 'Sozlamalar' },
-      { command: 'app', description: 'Ilovani ochish' },
-      { command: 'help', description: 'Yordam' },
-    ]);
-    await telegram.setMyDescription(
-      "Shifokor yozib bergan retseptni kiriting — Sog'lom Hayot har bir dori vaqtida eslatib turadi, " +
-        "ichilgan dorilarni belgilab boradi va davolanish hisobotini ko'rsatadi."
-    );
-    await telegram.setMyShortDescription("Retsept bo'yicha dori ichishni eslatuvchi yordamchi 💊");
+
+    // Buyruqlar va tavsif: standart — o'zbekcha, Telegram'i rus tilida bo'lganlarga — ruscha.
+    const commands = (lang: Lang) =>
+      COMMANDS.map(([command, key]) => ({ command, description: t(lang, key) }));
+    await telegram.setMyCommands(commands('uz'));
+    await telegram.setMyCommands(commands('ru'), { language_code: 'ru' });
+    for (const [lang, code] of [['uz', undefined], ['ru', 'ru']] as const) {
+      await telegram.setMyDescription(t(lang, 'bot.description'), code);
+      await telegram.setMyShortDescription(t(lang, 'bot.shortDescription'), code);
+    }
+    // Adminlarga (ularning chatida) qo'shimcha /admin buyrug'i ko'rinadi.
+    for (const id of adminIds()) {
+      await telegram
+        .setMyCommands([...commands('uz'), { command: 'admin', description: t('uz', 'menu.admin') }], {
+          scope: { type: 'chat', chat_id: Number(id) },
+        })
+        .catch(() => {}); // admin hali botga yozmagan bo'lsa — chat topilmaydi
+    }
     const info = await telegram.getWebhookInfo();
 
     return NextResponse.json({

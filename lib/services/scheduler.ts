@@ -2,18 +2,22 @@ import type { Telegram } from 'telegraf';
 import { db } from '@/lib/db';
 import { mapLimit } from '@/lib/concurrency';
 import { isMessageNotModified, isUserUnreachable, withRateLimitRetry, esc } from '@/lib/bot/telegram';
-import { reminderView } from '@/lib/bot/views';
+import { lowStockView, reminderView } from '@/lib/bot/views';
 import { mainKeyboard } from '@/lib/bot/keyboards';
 import { getReminderGroup, MISS_AFTER_MS } from '@/lib/services/doses';
 import { adherencePercent, countDosesByMedication, sumCounts } from '@/lib/services/prescriptions';
+import { claimLowStockAlerts, releaseLowStockAlert } from '@/lib/services/stock';
+import { inAdminMode } from '@/lib/services/users';
 import { dateIn, daysInclusive, formatDate, safeTimeZone } from '@/lib/time';
 import { LEAD_OPTIONS } from '@/lib/constants';
+import { langOf, t, type Lang } from '@/lib/i18n';
 
 // Tashqi cron (cron-job.org) /api/cron/tick ni har daqiqada chaqiradi. Har chaqiruvda:
 //   1) vaqti kelgan dozalar uchun eslatma;
 //   2) javob berilmagan eslatmalar uchun bitta qayta eslatma;
 //   3) 3 soat o'tib ham belgilanmagan dozalar — "belgilanmadi";
-//   4) muddati tugagan retseptlar — yakunlanadi va foydalanuvchiga natija yuboriladi.
+//   4) muddati tugagan retseptlar — yakunlanadi va foydalanuvchiga natija yuboriladi;
+//   5) zaxirasi tugayotgan dorilar — ogohlantirish (kunduzi, kuniga ko'pi bilan bir marta).
 //
 // Cron ikki marta (yoki bir vaqtda) ishlasa ham har xabar bir marta ketadi: har bir doza avval
 // bazada atomar "band qilinadi" (remindedAt / followUpAt), keyin xabar yuboriladi.
@@ -23,7 +27,7 @@ const STALE_REMINDER_MS = 2 * 60 * 60_000;
 const MAX_LEAD_MS = Math.max(...LEAD_OPTIONS) * 60_000;
 const BATCH = 400;
 const CONCURRENCY = 8;
-// Vercel funksiyasi 60 soniyada to'xtatiladi — ishni shu vaqtdan oldin yakunlaymiz.
+// Route'ning maxDuration'i 60 soniya (app/api/cron/tick) — ishni shu vaqtdan oldin yakunlaymiz.
 const TIME_BUDGET_MS = 45_000;
 
 interface GroupKey {
@@ -31,6 +35,7 @@ interface GroupKey {
   scheduledAt: Date;
   telegramId: bigint;
   timezone: string;
+  lang: Lang;
 }
 
 function groupBy<T extends { userId: string; scheduledAt: Date }>(rows: T[]) {
@@ -62,7 +67,7 @@ export async function sendDueReminders(telegram: Telegram, now: Date, deadline: 
       id: true,
       userId: true,
       scheduledAt: true,
-      user: { select: { telegramId: true, timezone: true, leadMinutes: true } },
+      user: { select: { telegramId: true, timezone: true, leadMinutes: true, language: true, languageCode: true } },
     },
     orderBy: { scheduledAt: 'asc' },
     take: BATCH,
@@ -82,7 +87,8 @@ export async function sendDueReminders(telegram: Telegram, now: Date, deadline: 
     if (claimed.length === 0) return;
     const claimedIds = claimed.map((c) => c.id);
 
-    const ok = await deliverGroup(telegram, { userId, scheduledAt, telegramId: user.telegramId, timezone: user.timezone }, now, false);
+    const key = { userId, scheduledAt, telegramId: user.telegramId, timezone: user.timezone, lang: langOf(user) };
+    const ok = await deliverGroup(telegram, key, now, false);
     if (ok === 'sent') sent += 1;
     else if (ok === 'retry') {
       // Vaqtinchalik xato — keyingi cron chaqiruvida qayta urinamiz.
@@ -101,7 +107,7 @@ async function deliverGroup(
 ): Promise<'sent' | 'retry' | 'unreachable' | 'empty'> {
   const doses = await getReminderGroup(key.userId, key.scheduledAt);
   if (!doses.some((d) => d.status === 'PENDING')) return 'empty';
-  const { text, extra } = reminderView(doses, { now, timezone: safeTimeZone(key.timezone), followUp });
+  const { text, extra } = reminderView(doses, { now, timezone: safeTimeZone(key.timezone), lang: key.lang, followUp });
 
   try {
     const msg = await withRateLimitRetry(() => telegram.sendMessage(Number(key.telegramId), text, extra));
@@ -143,7 +149,7 @@ export async function sendFollowUps(telegram: Telegram, now: Date, deadline: num
       userId: true,
       scheduledAt: true,
       remindedAt: true,
-      user: { select: { telegramId: true, timezone: true, followUpMinutes: true } },
+      user: { select: { telegramId: true, timezone: true, followUpMinutes: true, language: true, languageCode: true } },
     },
     orderBy: { scheduledAt: 'asc' },
     take: BATCH,
@@ -164,7 +170,8 @@ export async function sendFollowUps(telegram: Telegram, now: Date, deadline: num
       select: { id: true },
     });
     if (claimed.length === 0) return;
-    const result = await deliverGroup(telegram, { userId, scheduledAt, telegramId: user.telegramId, timezone: user.timezone }, now, true);
+    const key = { userId, scheduledAt, telegramId: user.telegramId, timezone: user.timezone, lang: langOf(user) };
+    const result = await deliverGroup(telegram, key, now, true);
     if (result === 'sent') sent += 1;
     else if (result === 'retry') {
       await db.dose.updateMany({ where: { id: { in: claimed.map((c) => c.id) } }, data: { followUpAt: null } });
@@ -185,7 +192,7 @@ export async function markMissedDoses(telegram: Telegram, now: Date, deadline: n
       userId: true,
       scheduledAt: true,
       messageId: true,
-      user: { select: { telegramId: true, timezone: true, blockedAt: true } },
+      user: { select: { telegramId: true, timezone: true, blockedAt: true, language: true, languageCode: true } },
     },
     take: 1000,
   });
@@ -203,7 +210,7 @@ export async function markMissedDoses(telegram: Telegram, now: Date, deadline: n
     const { userId, scheduledAt, messageId, user } = group[0];
     const doses = await getReminderGroup(userId, scheduledAt);
     if (doses.length === 0 || messageId === null) return;
-    const { text, extra } = reminderView(doses, { now, timezone: safeTimeZone(user.timezone) });
+    const { text, extra } = reminderView(doses, { now, timezone: safeTimeZone(user.timezone), lang: langOf(user) });
     await telegram.editMessageText(Number(user.telegramId), messageId, undefined, text, extra).catch((err) => {
       if (!isMessageNotModified(err) && !isUserUnreachable(err)) console.error('[scheduler] xabar yangilanmadi:', err);
     });
@@ -221,7 +228,7 @@ export async function completeFinishedCourses(telegram: Telegram, now: Date, dea
   const latestToday = dateIn('Pacific/Kiritimati', now);
   const candidates = await db.prescription.findMany({
     where: { status: 'ACTIVE', endDate: { lt: latestToday } },
-    include: { user: true, medications: { select: { id: true, name: true } } },
+    include: { user: true, medications: { select: { id: true, name: true, asNeeded: true } } },
     take: 100,
   });
 
@@ -240,24 +247,29 @@ export async function completeFinishedCourses(telegram: Telegram, now: Date, dea
     completed += 1;
 
     if (p.user.blockedAt) continue;
-    const counts = sumCounts((await countDosesByMedication(p.medications.map((m) => m.id), now)).values());
+    const lang = langOf(p.user);
+    const scheduled = p.medications.filter((m) => !m.asNeeded).map((m) => m.id);
+    const counts = sumCounts((await countDosesByMedication(scheduled, now)).values());
     const pct = adherencePercent(counts);
     const lines = [
-      `🎉 <b>«${esc(p.title)}» davolanish kursi yakunlandi!</b>`,
+      t(lang, 'done.title', { title: esc(p.title) }),
       '',
-      `📅 ${daysInclusive(p.startDate, p.endDate)} kun (${formatDate(p.startDate)} – ${formatDate(p.endDate)})`,
-      `💊 Dorilar: ${p.medications.map((m) => esc(m.name)).join(', ')}`,
+      t(lang, 'done.range', {
+        days: t(lang, 'common.days', { n: daysInclusive(p.startDate, p.endDate) }),
+        from: formatDate(p.startDate),
+        to: formatDate(p.endDate),
+      }),
+      t(lang, 'done.meds', { list: p.medications.map((m) => esc(m.name)).join(', ') }),
     ];
-    if (pct !== null) lines.push(`✅ Ichilgan dozalar: <b>${counts.taken}</b> (${pct}%)`);
+    if (pct !== null) lines.push(t(lang, 'done.taken', { n: counts.taken, pct }));
     lines.push(
       '',
-      pct !== null && pct >= 90
-        ? "Barakalla — dorilarni deyarli o'z vaqtida ichdingiz! 👏"
-        : "Agar alomatlar saqlanib qolsa, shifokoringizga murojaat qiling.",
-      "Sog'ayib keting! 🌿 Yangi retsept bo'lsa — «➕ Yangi retsept» tugmasini bosing."
+      t(lang, pct !== null && pct >= 90 ? 'done.great' : 'done.seeDoctor'),
+      t(lang, 'done.footer', { add: t(lang, 'menu.add') })
     );
+    const keyboard = mainKeyboard(lang, { admin: inAdminMode(p.user) });
     await withRateLimitRetry(() =>
-      telegram.sendMessage(Number(p.user.telegramId), lines.join('\n'), { parse_mode: 'HTML', ...mainKeyboard() })
+      telegram.sendMessage(Number(p.user.telegramId), lines.join('\n'), { parse_mode: 'HTML', ...keyboard })
     ).catch(async (err) => {
       if (isUserUnreachable(err)) await markUnreachable(p.userId);
       else console.error('[scheduler] kurs yakuni xabari yuborilmadi:', err);
@@ -272,14 +284,47 @@ export async function completeFinishedCourses(telegram: Telegram, now: Date, dea
  */
 export async function refreshReminderMessage(
   telegram: Telegram,
-  user: { id: string; telegramId: bigint; timezone: string },
+  user: { id: string; telegramId: bigint; timezone: string; language: string | null; languageCode: string | null },
   dose: { scheduledAt: Date; messageId: number | null }
 ) {
   if (dose.messageId === null) return;
   const doses = await getReminderGroup(user.id, dose.scheduledAt);
   if (doses.length === 0) return;
-  const { text, extra } = reminderView(doses, { now: new Date(), timezone: safeTimeZone(user.timezone) });
+  const { text, extra } = reminderView(doses, {
+    now: new Date(),
+    timezone: safeTimeZone(user.timezone),
+    lang: langOf(user),
+  });
   await telegram.editMessageText(Number(user.telegramId), dose.messageId, undefined, text, extra).catch(() => {});
+}
+
+// ---------------------------------------------------------------------------
+// 5) Zaxira tugayotgani haqida ogohlantirish
+// ---------------------------------------------------------------------------
+
+export async function sendLowStockAlerts(telegram: Telegram, now: Date, deadline: number) {
+  if (Date.now() > deadline) return 0;
+  const alerts = await claimLowStockAlerts(now);
+  let sent = 0;
+  await mapLimit(alerts, CONCURRENCY, async ({ user, medication, forecast }) => {
+    if (Date.now() > deadline) {
+      await releaseLowStockAlert(medication.id);
+      return;
+    }
+    const { text, extra } = lowStockView(medication, forecast, langOf(user));
+    try {
+      await withRateLimitRetry(() => telegram.sendMessage(Number(user.telegramId), text, extra));
+      sent += 1;
+    } catch (err) {
+      if (isUserUnreachable(err)) {
+        await markUnreachable(user.id);
+      } else {
+        console.error('[scheduler] zaxira ogohlantirishi yuborilmadi:', err);
+        await releaseLowStockAlert(medication.id);
+      }
+    }
+  });
+  return sent;
 }
 
 export async function runScheduledJobs(telegram: Telegram, now = new Date()) {
@@ -288,5 +333,6 @@ export async function runScheduledJobs(telegram: Telegram, now = new Date()) {
   const followUps = await sendFollowUps(telegram, now, deadline);
   const missed = await markMissedDoses(telegram, now, deadline);
   const completed = await completeFinishedCourses(telegram, now, deadline);
-  return { reminders, followUps, missed, completed };
+  const lowStock = await sendLowStockAlerts(telegram, now, deadline);
+  return { reminders, followUps, missed, completed, lowStock };
 }

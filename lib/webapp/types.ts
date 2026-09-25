@@ -1,10 +1,20 @@
 // Mini App API javoblari. Server (lib/webapp/service.ts) va brauzer (app/app) ikkalasi ham
 // shu turlardan foydalanadi. Sanalar "YYYY-MM-DD", vaqtlar "HH:MM", lahzalar ISO satr.
 
-import type { Meal } from '@/lib/constants';
+import type { Meal, StockUnit } from '@/lib/constants';
+import type { Lang } from '@/lib/i18n';
+
+export type { AdminOverview, AdminUserRow } from '@/lib/services/admin';
 
 export type DoseStatus = 'PENDING' | 'TAKEN' | 'SKIPPED' | 'MISSED';
 export type DoseActionName = 'take' | 'skip' | 'undo';
+
+// GET /api/app/me — ilova ochilganda: til va admin huquqi.
+export interface MeView {
+  lang: Lang;
+  isAdmin: boolean;
+  adminMode: boolean;
+}
 
 export interface DoseView {
   id: string;
@@ -28,6 +38,15 @@ export interface DoseCountsView {
   pending: number;
 }
 
+export interface AsNeededView {
+  id: string;
+  name: string;
+  dosage: string | null;
+  maxPerDay: number | null;
+  countToday: number;
+  lastTime: string | null;
+}
+
 export interface TodayView {
   date: string;
   today: string;
@@ -39,6 +58,18 @@ export interface TodayView {
   next: { scheduledAt: string; date: string; time: string; names: string[] } | null;
   activePrescriptions: number;
   remindersEnabled: boolean;
+  // "Kerak bo'lganda" dorilari (faqat bugun uchun).
+  asNeeded: AsNeededView[];
+  // Zaxirasi tugayotgan dorilar nomi.
+  lowStock: string[];
+}
+
+export interface StockForecastView {
+  enough: boolean;
+  runOutDate: string | null;
+  daysLeft: number | null;
+  need: number;
+  dosesLeft: number;
 }
 
 export interface MedicationView {
@@ -47,6 +78,10 @@ export interface MedicationView {
   dosage: string | null;
   meal: Meal;
   times: string[];
+  everyDays: number;
+  weekdays: number[];
+  asNeeded: boolean;
+  maxPerDay: number | null;
   startDate: string;
   endDate: string;
   days: number;
@@ -54,6 +89,8 @@ export interface MedicationView {
   taken: number;
   resolved: number;
   percent: number | null;
+  stock: number | null;
+  unit: StockUnit;
 }
 
 export type PrescriptionStatus = 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
@@ -85,6 +122,26 @@ export interface PrescriptionDetailView extends PrescriptionSummary {
   counts: { total: number; taken: number; skipped: number; missed: number };
 }
 
+// GET /api/app/stock
+export interface StockItemView {
+  id: string;
+  name: string;
+  dosage: string | null;
+  prescriptionTitle: string;
+  asNeeded: boolean;
+  stock: number | null;
+  unit: StockUnit;
+  unitsPerDose: number;
+  refillDays: number;
+  forecast: StockForecastView | null;
+  low: boolean;
+}
+
+export interface StockView {
+  today: string;
+  items: StockItemView[];
+}
+
 export interface StatsView {
   period: 7 | 30;
   from: string;
@@ -106,6 +163,9 @@ export interface SettingsView {
   leadMinutes: number;
   followUpMinutes: number;
   since: string;
+  language: Lang;
+  isAdmin: boolean;
+  adminMode: boolean;
 }
 
 // POST /api/app/prescriptions
@@ -115,6 +175,11 @@ export interface NewMedicationBody {
   meal: Meal;
   times: string[];
   days: number | null;
+  everyDays?: number;
+  weekdays?: number[];
+  asNeeded?: boolean;
+  maxPerDay?: number | null;
+  stock?: number | null;
 }
 
 export interface NewPrescriptionBody {

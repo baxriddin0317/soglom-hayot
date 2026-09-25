@@ -2,11 +2,14 @@
 
 import { useState } from 'react';
 import type { StatsView } from '@/lib/webapp/types';
-import { formatDate, formatShort, weekday, WEEKDAYS_SHORT } from '@/lib/time';
+import { formatDate, formatShort, weekday, weekdayShort } from '@/lib/time';
 import { useApi } from '../api';
+import { useLang, useT } from '../store';
 import { ErrorState, Loading, ProgressBar, pctClass } from '../ui';
 
 export function StatsScreen() {
+  const t = useT();
+  const lang = useLang();
   const [period, setPeriod] = useState<7 | 30>(7);
   const { data, error, reload } = useApi<StatsView>(`stats?period=${period}`);
 
@@ -15,7 +18,7 @@ export function StatsScreen() {
       <div className="segmented">
         {([7, 30] as const).map((p) => (
           <button key={p} type="button" className={`stab ${period === p ? 'on' : ''}`} onClick={() => setPeriod(p)}>
-            {p} kun
+            {t('common.days', { n: p })}
           </button>
         ))}
       </div>
@@ -24,9 +27,9 @@ export function StatsScreen() {
 
   const head = (
     <div className="page-head">
-      <div className="page-title">Hisobot</div>
+      <div className="page-title">{t('app.stats.title')}</div>
       <div className="page-sub">
-        {data ? `${formatDate(data.from)} – ${formatDate(data.to)}` : 'Davolanishga rioya darajasi'}
+        {data ? `${formatDate(data.from)} – ${formatDate(data.to)}` : t('app.stats.sub')}
       </div>
     </div>
   );
@@ -41,7 +44,7 @@ export function StatsScreen() {
     );
   }
 
-  const t = data.totals;
+  const tt = data.totals;
   const max = Math.max(1, ...data.days.map((d) => d.total));
 
   return (
@@ -49,11 +52,11 @@ export function StatsScreen() {
       {head}
       {tabs}
 
-      {t.total === 0 ? (
+      {tt.total === 0 ? (
         <div className="card" style={{ marginTop: 12 }}>
           <div className="empty" style={{ paddingBottom: 22 }}>
-            <div className="e-title">Ma'lumot yo'q</div>
-            <div className="e-text">Bu davrda dori rejalashtirilmagan.</div>
+            <div className="e-title">{t('app.stats.noData')}</div>
+            <div className="e-text">{t('app.stats.noDataText')}</div>
           </div>
         </div>
       ) : (
@@ -61,25 +64,26 @@ export function StatsScreen() {
           <div className="kpis">
             <div className="kpi">
               <div className={`kpi-v ${pctClass(data.percent)}`}>{data.percent === null ? '—' : `${data.percent}%`}</div>
-              <div className="kpi-k">rioya darajasi</div>
+              <div className="kpi-k">{t('app.stats.adherence')}</div>
             </div>
             <div className="kpi">
               <div className="kpi-v">🔥 {data.streak}</div>
-              <div className="kpi-k">ketma-ket to'liq kun</div>
+              <div className="kpi-k">{t('app.stats.streak')}</div>
             </div>
             <div className="kpi">
-              <div className="kpi-v pct-ok">{t.taken}</div>
-              <div className="kpi-k">ichilgan doza</div>
+              <div className="kpi-v pct-ok">{tt.taken}</div>
+              <div className="kpi-k">{t('app.stats.taken')}</div>
             </div>
             <div className="kpi">
-              <div className={`kpi-v ${t.missed + t.skipped ? 'pct-bad' : ''}`}>{t.missed + t.skipped}</div>
+              <div className={`kpi-v ${tt.missed + tt.skipped ? 'pct-bad' : ''}`}>{tt.missed + tt.skipped}</div>
               <div className="kpi-k">
-                o'tkazilgan{t.skipped && t.missed ? ` (${t.skipped} + ${t.missed})` : ''}
+                {t('app.stats.missed')}
+                {tt.skipped && tt.missed ? ` (${tt.skipped} + ${tt.missed})` : ''}
               </div>
             </div>
           </div>
 
-          <div className="sec-title">Kunlar bo'yicha</div>
+          <div className="sec-title">{t('app.stats.byDay')}</div>
           <div className="card chart">
             <div className="plot">
               {data.days.map((d) => (
@@ -100,7 +104,7 @@ export function StatsScreen() {
               {data.days.map((d, i) => (
                 <div key={d.date} className="xlab">
                   {period === 7
-                    ? WEEKDAYS_SHORT[weekday(d.date)]
+                    ? weekdayShort(weekday(d.date), lang)
                     : i % 5 === 0 || i === data.days.length - 1
                       ? formatShort(d.date)
                       : ''}
@@ -108,15 +112,15 @@ export function StatsScreen() {
               ))}
             </div>
             <div className="legend" style={{ marginTop: 10 }}>
-              <span className="lg"><span className="sw ok" />ichildi</span>
-              <span className="lg"><span className="sw warn" />o'tkazildi</span>
-              <span className="lg"><span className="sw bad" />belgilanmadi</span>
+              <span className="lg"><span className="sw ok" />{t('app.stats.lgTaken')}</span>
+              <span className="lg"><span className="sw warn" />{t('app.stats.lgSkipped')}</span>
+              <span className="lg"><span className="sw bad" />{t('app.stats.lgMissed')}</span>
             </div>
           </div>
 
           {data.medications.length > 0 && (
             <>
-              <div className="sec-title">Dorilar bo'yicha</div>
+              <div className="sec-title">{t('app.stats.byMed')}</div>
               <div className="card">
                 {data.medications.map((m) => (
                   <div className="mrow" key={m.id}>
@@ -136,10 +140,7 @@ export function StatsScreen() {
             </>
           )}
 
-          <div className="sec-note">
-            Rioya — natijasi ma'lum dozalardan (ichildi, o'tkazildi, belgilanmadi) nechtasi ichilgani. Hali vaqti
-            kelmagan dozalar hisobga olinmaydi.
-          </div>
+          <div className="sec-note">{t('app.stats.note')}</div>
         </>
       )}
     </>

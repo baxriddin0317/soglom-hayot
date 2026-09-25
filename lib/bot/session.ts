@@ -17,7 +17,13 @@ export interface DraftMedication {
   name?: string;
   dosage?: string | null;
   perDay?: number;
+  // "Har N soatda" tanlangan bo'lsa.
+  intervalHours?: number;
   times?: string[];
+  everyDays?: number;
+  weekdays?: number[];
+  asNeeded?: boolean;
+  maxPerDay?: number | null;
   days?: number | null;
   meal?: Meal;
 }
@@ -30,11 +36,16 @@ export type BotState =
   | { step: 'med_dosage'; draft: DraftPrescription; med: DraftMedication }
   | { step: 'med_count'; draft: DraftPrescription; med: DraftMedication }
   | { step: 'med_times'; draft: DraftPrescription; med: DraftMedication }
+  | { step: 'med_freq'; draft: DraftPrescription; med: DraftMedication }
+  | { step: 'med_weekdays'; draft: DraftPrescription; med: DraftMedication }
+  | { step: 'med_max'; draft: DraftPrescription; med: DraftMedication }
   | { step: 'med_days'; draft: DraftPrescription; med: DraftMedication }
   | { step: 'med_meal'; draft: DraftPrescription; med: DraftMedication }
+  | { step: 'med_stock'; draft: DraftPrescription; med: DraftMedication }
   | { step: 'rx_review'; draft: DraftPrescription }
   | { step: 'edit_times'; medicationId: string }
   | { step: 'edit_days'; prescriptionId: string }
+  | { step: 'stock_qty'; medicationId: string }
   | { step: 'tz_custom' };
 
 export type BotStep = BotState['step'];

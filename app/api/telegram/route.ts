@@ -1,7 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import type { Update } from 'telegraf/types';
 import { getBot } from '@/lib/bot';
+import { runAfterResponse } from '@/lib/concurrency';
 import { safeEqual } from '@/lib/secrets';
+import { cronWatchdog } from '@/lib/services/system';
 
 // Telegram webhook: har bir yangi xabar / tugma bosilishi (update) shu yerga POST qilinadi.
 //
@@ -29,12 +31,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
+  const bot = getBot();
   try {
-    await getBot().handleUpdate(update);
+    await bot.handleUpdate(update);
   } catch (err) {
     // Telegram 200 olmasa update'ni qayta-qayta yuboradi — xatoni faqat logga yozamiz.
     console.error('[telegram webhook] xato:', err);
   }
+  // Cron to'xtab qolgan bo'lsa adminlarga xabar (javobdan keyin, instance'da 5 daqiqada bir marta).
+  runAfterResponse(() => cronWatchdog(bot.telegram));
 
   return NextResponse.json({ ok: true });
 }

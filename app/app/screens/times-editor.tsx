@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { MAX_TIMES_PER_DAY, suggestedTimes } from '@/lib/time';
+import { useT } from '../store';
 import { haptic } from '../telegram';
 
 // Qabul vaqtlari: tanlangan vaqtlar (bosib o'chiriladi), yangi vaqt qo'shish va tez tanlovlar.
@@ -14,6 +15,7 @@ export function TimesEditor({
   onChange: (times: string[]) => void;
   presets?: boolean;
 }) {
+  const t = useT();
   const [draft, setDraft] = useState('12:00');
   const full = times.length >= MAX_TIMES_PER_DAY;
 
@@ -26,16 +28,16 @@ export function TimesEditor({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div className="chips">
-        {times.length === 0 && <span className="label">Vaqt tanlanmagan</span>}
-        {times.map((t) => (
+        {times.length === 0 && <span className="label">{t('app.times.none')}</span>}
+        {times.map((tm) => (
           <button
-            key={t}
+            key={tm}
             type="button"
             className="chip on"
-            aria-label={`${t} ni olib tashlash`}
-            onClick={() => onChange(times.filter((x) => x !== t))}
+            aria-label={t('app.times.remove', { t: tm })}
+            onClick={() => onChange(times.filter((x) => x !== tm))}
           >
-            {t} <span className="x">×</span>
+            {tm} <span className="x">×</span>
           </button>
         ))}
       </div>
@@ -45,17 +47,17 @@ export function TimesEditor({
           type="time"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          aria-label="Yangi vaqt"
+          aria-label={t('app.times.new')}
         />
         <button type="button" className="btn quiet small" disabled={full || times.includes(draft)} onClick={add}>
-          + Qo'shish
+          {t('app.times.add')}
         </button>
       </div>
       {presets && (
       <div className="chips">
         {[1, 2, 3, 4].map((n) => (
           <button key={n} type="button" className="chip add" onClick={() => onChange(suggestedTimes(n))}>
-            {n} mahal: {suggestedTimes(n).join(', ')}
+            {t('app.times.preset', { n, list: suggestedTimes(n).join(', ') })}
           </button>
         ))}
       </div>

@@ -6,7 +6,7 @@
  * joyda, .env siz ham ishga tushirish mumkin.
  */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import { PrismaPGlite } from 'pglite-prisma-adapter';
 
@@ -95,10 +95,88 @@ async function main() {
     assert.equal(computeStreak(days, '2026-09-24'), 3);
   });
 
+  console.log('\nKo\'p tillilik va jadval');
+  const i18n = await import('../lib/i18n');
+  const { uz } = await import('../lib/i18n/uz');
+  const { ru } = await import('../lib/i18n/ru');
+  const constants = await import('../lib/constants');
+  const { forecastFromDoses } = await import('../lib/services/stock');
+
+  await test('Lotin -> kirill: maxsus harflar, tutuq belgisi, HTML va parametrlar tegilmaydi', () => {
+    assert.equal(
+      i18n.latinToCyrillic("Yetadi, o'zgartirish, g'isht, ma'lumot, Eslatma, shifokor, CHOY, retsept"),
+      'Етади, ўзгартириш, ғишт, маълумот, Эслатма, шифокор, ЧОЙ, рецепт'
+    );
+    assert.equal(i18n.latinToCyrillic('<b>Salom</b> {name} &amp;'), '<b>Салом</b> {name} &amp;');
+    assert.equal(i18n.t('uz_cyrl', 'start.hello', { name: 'Ali' }), 'Ассалому алайкум, Ali! 👋');
+  });
+  await test("Rus tili: so'z shakllari va barcha kalitlar tarjima qilingan", () => {
+    assert.equal(i18n.t('ru', 'common.days', { n: 1 }), '1 день');
+    assert.equal(i18n.t('ru', 'common.days', { n: 3 }), '3 дня');
+    assert.equal(i18n.t('ru', 'common.days', { n: 11 }), '11 дней');
+    assert.equal(i18n.t('ru', 'unit.tablet', { n: '2,5' }), '2,5 таблетки');
+    for (const key of Object.keys(uz) as (keyof typeof uz)[]) {
+      assert.ok(ru[key]?.trim(), `ru: ${key} tarjima qilinmagan`);
+      // Parametrlar ikkala tilda ham bir xil bo'lishi kerak.
+      const params = (s: string) => [...new Set([...s.matchAll(/\{(\w+)/g)].map((m) => m[1]))].sort().join(',');
+      assert.equal(params(ru[key]), params(uz[key]), `ru: ${key} parametrlari mos emas`);
+    }
+  });
+  await test('Til aniqlash', () => {
+    assert.equal(i18n.detectLang('ru'), 'ru');
+    assert.equal(i18n.detectLang('uz'), 'uz');
+    assert.equal(i18n.detectLang('en'), 'uz');
+    assert.equal(i18n.langOf({ language: 'uz_cyrl', languageCode: 'ru' }), 'uz_cyrl');
+  });
+  await test('parseDosage: miqdor va birlik (uz/ru)', () => {
+    assert.deepEqual(constants.parseDosage('2 tabletka'), { amount: 2, unit: 'tablet' });
+    assert.deepEqual(constants.parseDosage('½ таблетки'), { amount: 0.5, unit: 'tablet' });
+    assert.deepEqual(constants.parseDosage('5 ml'), { amount: 5, unit: 'ml' });
+    assert.deepEqual(constants.parseDosage('1/2 tab'), { amount: 0.5, unit: 'tablet' });
+    assert.deepEqual(constants.parseDosage('1 ukol'), { amount: 1, unit: 'ampoule' });
+    assert.deepEqual(constants.parseDosage(null), { amount: 1, unit: 'piece' });
+  });
+  await test('parseWeekdays / intervalTimes / isScheduledOn', () => {
+    assert.deepEqual(time.parseWeekdays('Du Ch Ju'), [1, 3, 5]);
+    assert.deepEqual(time.parseWeekdays('пн, ср, пт'), [1, 3, 5]);
+    assert.deepEqual(time.parseWeekdays('Ду Чо Жу'), [1, 3, 5]);
+    assert.equal(time.parseWeekdays('ertaga'), null);
+    assert.deepEqual(time.intervalTimes(8, '06:00'), ['06:00', '14:00', '22:00']);
+    assert.deepEqual(time.intervalTimes(12, '09:30'), ['09:30', '21:30']);
+    assert.equal(time.intervalTimes(6, '06:00').length, 4);
+    const everyOther = { startDate: '2026-09-24', everyDays: 2, weekdays: [] };
+    assert.ok(time.isScheduledOn(everyOther, '2026-09-26'));
+    assert.ok(!time.isScheduledOn(everyOther, '2026-09-25'));
+    assert.ok(time.isScheduledOn({ startDate: '2026-09-24', everyDays: 1, weekdays: [1] }, '2026-09-28')); // dushanba
+    assert.ok(!time.isScheduledOn({ startDate: '2026-09-24', everyDays: 1, weekdays: [1] }, '2026-09-29'));
+  });
+  await test('Zaxira prognozi: qaysi kuni tugashi va qancha kerakligi', () => {
+    const med = { id: 'm', stock: 5, stockUnit: 'tablet', unitsPerDose: 1, dosage: '1 tabletka', asNeeded: false };
+    // Kuniga 2 ta, 5 kun: 5 tabletka 2,5 kunga yetadi -> 3-kuni tugaydi, yana 5 ta kerak.
+    const pending: [string, number][] = [
+      ['2026-09-24', 2],
+      ['2026-09-25', 2],
+      ['2026-09-26', 2],
+      ['2026-09-27', 2],
+      ['2026-09-28', 2],
+    ];
+    const f = forecastFromDoses(med, pending, '2026-09-24');
+    assert.equal(f.enough, false);
+    assert.equal(f.runOutDate, '2026-09-26');
+    assert.equal(f.daysLeft, 2);
+    assert.equal(f.need, 5);
+    const enough = forecastFromDoses({ ...med, stock: 30 }, pending, '2026-09-24');
+    assert.equal(enough.enough, true);
+    assert.equal(enough.need, 0);
+  });
+
   // -------------------------------------------------------------------------
   console.log('\nBaza (PGlite) bilan integratsiya');
   const pg = new PGlite();
-  await pg.exec(readFileSync('prisma/migrations/20260924000000_init/migration.sql', 'utf8'));
+  // Barcha migratsiyalar tartib bilan — prod bazasi ham aynan shunday holatga keladi.
+  for (const dir of readdirSync('prisma/migrations').filter((d) => /^\d+_/.test(d)).sort()) {
+    await pg.exec(readFileSync(`prisma/migrations/${dir}/migration.sql`, 'utf8'));
+  }
   const { PrismaClient } = await import('../lib/generated/prisma/client');
   const prisma = new PrismaClient({ adapter: new PrismaPGlite(pg) });
   const { setDb } = await import('../lib/db');
@@ -153,16 +231,27 @@ async function main() {
       },
     } as never);
 
-  await test('/start — foydalanuvchi yaratiladi, menyu va ilova tugmasi', async () => {
+  await test('/start — birinchi marta til tanlash, keyin menyu va ilova tugmasi', async () => {
     reset();
     await sendText('/start');
     const user = await prisma.user.findUnique({ where: { telegramId: BigInt(TG_ID) } });
     assert.ok(user);
+    assert.equal(user.language, null);
+    assert.equal(sent().length, 1);
+    assert.match(JSON.stringify(sent()[0].payload.reply_markup), /lang:uz:1/);
+    reset();
+    await press('lang:uz:1');
+    assert.equal((await prisma.user.findUniqueOrThrow({ where: { telegramId: BigInt(TG_ID) } })).language, 'uz');
     assert.equal(sent().length, 2);
     assert.match(String(sent()[0].payload.text), /Yangi retsept/);
+    assert.match(JSON.stringify(sent()[0].payload.reply_markup), /Zaxira/);
+    // Keyingi /start — to'g'ridan-to'g'ri menyu.
+    reset();
+    await sendText('/start');
+    assert.equal(sent().length, 2);
   });
 
-  await test("Bot dialogi: retsept qo'shish (2 ta dori) — oxirida saqlanadi", async () => {
+  await test("Bot dialogi: retsept qo'shish (2 ta dori, zaxira bilan) — oxirida saqlanadi", async () => {
     await sendText('➕ Yangi retsept');
     await sendText('Angina');
     await sendText('7 kun');
@@ -173,16 +262,22 @@ async function main() {
     await sendText('1 tabletka');
     await sendText('2 marta');
     await sendText('✅ 08:00 · 20:00');
+    await sendText('📅 Har kuni');
     await sendText('5 kun');
     await sendText('Ovqatdan keyin');
+    assert.match(lastText(), /qancha bor/);
+    await sendText('20');
     assert.match(lastText(), /Amoksiklav 625/);
+    assert.match(lastText(), /20 tabletka/);
     await sendText("➕ Yana dori qo'shish");
     await sendText('Paracetamol');
     await sendText("⏭ O'tkazib yuborish");
     await sendText('3 marta');
     await sendText('9 13:30 21'); // o'z vaqtlari
+    await sendText('🔁 Kun ora');
     await sendText('♾ Butun kurs (7 kun)');
     await sendText("Farqi yo'q");
+    await sendText("⏭ O'tkazib yuborish"); // zaxira
     await sendText('✅ Saqlash');
     assert.match(lastText(), /Retsept saqlandi/);
 
@@ -190,13 +285,42 @@ async function main() {
     assert.equal(p.title, 'Angina');
     assert.equal(time.daysInclusive(p.startDate, p.endDate), 7);
     assert.equal(p.medications.length, 2);
-    assert.deepEqual(p.medications[0].times, ['08:00', '20:00']);
-    assert.equal(p.medications[0].meal, 'AFTER');
-    assert.equal(time.daysInclusive(p.medications[0].startDate, p.medications[0].endDate), 5);
-    assert.deepEqual(p.medications[1].times, ['09:00', '13:30', '21:00']);
-    assert.equal(p.medications[1].endDate, p.endDate);
+    const [amox, para] = p.medications;
+    assert.deepEqual(amox.times, ['08:00', '20:00']);
+    assert.equal(amox.meal, 'AFTER');
+    assert.equal(amox.stock, 20);
+    assert.equal(amox.stockUnit, 'tablet');
+    assert.equal(time.daysInclusive(amox.startDate, amox.endDate), 5);
+    assert.deepEqual(para.times, ['09:00', '13:30', '21:00']);
+    assert.equal(para.everyDays, 2);
+    assert.equal(para.stock, null);
+    assert.equal(para.endDate, p.endDate);
+    // Kun ora: 7 kunlik kursda 4 kun (1, 3, 5, 7-kunlar) — bugungi o'tgan vaqtlar hisobga olinmaydi.
+    const paraDates = new Set((await prisma.dose.findMany({ where: { medicationId: para.id } })).map((d) => d.date));
+    assert.ok([...paraDates].every((d) => time.diffDays(p.startDate, d) % 2 === 0));
     const user = await prisma.user.findFirstOrThrow();
     assert.equal(user.botState, null);
+  });
+
+  await test("Bot dialogi: «kerak bo'lganda» dori (kunlik chegara bilan) — reja yaratilmaydi", async () => {
+    await sendText('➕ Yangi retsept');
+    await sendText("⏭ O'tkazib yuborish");
+    await sendText('3 kun');
+    await sendText('Bugundan');
+    await sendText('Ibuprofen 400');
+    await sendText('1 tabletka');
+    await sendText("💊 Kerak bo'lganda");
+    await sendText('3 marta'); // kuniga ko'pi bilan
+    await sendText('♾ Butun kurs (3 kun)');
+    await sendText('Ovqat bilan');
+    await sendText('10');
+    await sendText('✅ Saqlash');
+    assert.match(lastText(), /Retsept saqlandi/);
+    const med = await prisma.medication.findFirstOrThrow({ where: { name: 'Ibuprofen 400' } });
+    assert.equal(med.asNeeded, true);
+    assert.equal(med.maxPerDay, 3);
+    assert.deepEqual(med.times, []);
+    assert.equal(await prisma.dose.count({ where: { medicationId: med.id } }), 0);
   });
 
   await test('Dialog: "Orqaga", noto\'g\'ri qiymat va "Bekor qilish"', async () => {
@@ -301,7 +425,7 @@ async function main() {
     // Kechikib "ichgan edim"
     await markDose(user2, vit.id, 'take', at(D1, '12:00'));
     assert.equal((await prisma.dose.findUniqueOrThrow({ where: { id: vit.id } })).status, 'TAKEN');
-    await assert.rejects(() => markDose(user2, vit.id, 'take', at('2030-03-20', '12:00')), /juda eski/);
+    await assert.rejects(() => markDose(user2, vit.id, 'take', at('2030-03-20', '12:00')), /err.oldDose/);
   });
 
   await test("Oldindan eslatish (10 daqiqa) — 19:50 da keladi", async () => {
@@ -317,7 +441,7 @@ async function main() {
 
   await test('Kelajakdagi kun dozasini belgilab bo\'lmaydi', async () => {
     const future = await prisma.dose.findFirstOrThrow({ where: { userId: user2.id, date: '2030-03-12' } });
-    await assert.rejects(() => markDose(user2, future.id, 'take', at(D1, '12:00')), /Kelgusi/);
+    await assert.rejects(() => markDose(user2, future.id, 'take', at(D1, '12:00')), /err.futureDose/);
   });
 
   await test("Vaqtlarni o'zgartirish: kelajakdagi dozalar qayta yaratiladi, tarix saqlanadi", async () => {
@@ -341,7 +465,7 @@ async function main() {
     p = await P.getPrescription(user2.id, rxId);
     assert.equal(p.endDate, '2030-03-11');
     assert.equal(await prisma.dose.count({ where: { medication: { prescriptionId: rxId }, date: { gt: '2030-03-11' } } }), 0);
-    await assert.rejects(() => P.setPrescriptionDays(user2, rxId, 3, at('2030-03-15', '12:00')), /kamida/);
+    await assert.rejects(() => P.setPrescriptionDays(user2, rxId, 3, at('2030-03-15', '12:00')), /err.minDays/);
     await P.setPrescriptionDays(user2, rxId, 3, at(D1, '12:00'));
   });
 
@@ -448,9 +572,9 @@ async function main() {
     });
     assert.equal(created.status, 200, JSON.stringify(created.json));
     const list = await call(rxsRoute, 'GET', 'prescriptions');
-    // "Angina" (bot orqali kiritilgan) yuqoridagi 2030-yilgi cron sinovida yakunlangan.
+    // Bot orqali kiritilganlar ("Angina" va h.k.) yuqoridagi 2030-yilgi cron sinovida yakunlangan.
     assert.deepEqual((list.json.active as { title: string }[]).map((p) => p.title), ["Bosh og'rig'i"]);
-    assert.deepEqual((list.json.finished as { title: string }[]).map((p) => p.title), ['Angina']);
+    assert.ok((list.json.finished as { title: string }[]).some((p) => p.title === 'Angina'));
     const detail = await call(rxRoute, 'GET', `prescription?id=${created.json.id}`);
     assert.equal((detail.json.medications as { days: number }[])[0].days, 2);
     // Boshqa foydalanuvchi ko'ra olmaydi
@@ -474,6 +598,266 @@ async function main() {
     assert.equal(ok.json.leadMinutes, 15);
     const stats = await call(statsRoute, 'GET', 'stats?period=30');
     assert.equal((stats.json.days as unknown[]).length, 30);
+  });
+
+  // -------------------------------------------------------------------------
+  console.log('\nZaxira, «kerak bo\'lganda», jadval turlari');
+  const S = await import('../lib/services/stock');
+  const { logAsNeeded, markGroup } = await import('../lib/services/doses');
+  const D2 = '2031-05-05'; // dushanba
+  const u4 = await upsertUser({ id: 777004, first_name: 'Zaxira' });
+
+  await test('Ichdim -> zaxira kamayadi, bekor qilinsa qaytadi; "Hammasini ichdim" ham hisoblanadi', async () => {
+    const p = await P.createPrescription(
+      u4,
+      P.validatePrescription(
+        {
+          title: 'Z',
+          days: 5,
+          startDate: D2,
+          medications: [
+            { name: 'Amox', dosage: '1 tabletka', times: ['08:00', '20:00'], stock: 5 },
+            { name: 'Sirop', dosage: '5 ml', times: ['08:00'], stock: 100 },
+          ],
+        },
+        D2
+      ),
+      at(D2, '07:00')
+    );
+    const [amox, sirop] = p.medications;
+    assert.equal(amox.stockUnit, 'tablet');
+    assert.equal(sirop.unitsPerDose, 5);
+    const morning = await prisma.dose.findFirstOrThrow({ where: { medicationId: amox.id, date: D2, time: '08:00' } });
+    await markDose(u4, morning.id, 'take', at(D2, '08:05'));
+    assert.equal((await prisma.medication.findUniqueOrThrow({ where: { id: amox.id } })).stock, 4);
+    await markDose(u4, morning.id, 'take', at(D2, '08:06')); // takror — o'zgarmaydi
+    assert.equal((await prisma.medication.findUniqueOrThrow({ where: { id: amox.id } })).stock, 4);
+    await markDose(u4, morning.id, 'undo', at(D2, '08:07'));
+    assert.equal((await prisma.medication.findUniqueOrThrow({ where: { id: amox.id } })).stock, 5);
+    await markGroup(u4, morning.id, 'take', at(D2, '08:08'));
+    assert.equal((await prisma.medication.findUniqueOrThrow({ where: { id: amox.id } })).stock, 4);
+    assert.equal((await prisma.medication.findUniqueOrThrow({ where: { id: sirop.id } })).stock, 95);
+  });
+
+  await test('Zaxira prognozi va tugayotganda cron ogohlantirishi (bir marta, kunduzi)', async () => {
+    const u = await prisma.user.findUniqueOrThrow({ where: { id: u4.id } });
+    const items = await S.listStock(u, at(D2, '09:00'));
+    const amox = items.find((i) => i.medication.name === 'Amox')!;
+    // 4 tabletka, kuniga 2 ta -> ertaga kechqurun tugaydi (3-kun), 2 kun ichida — ogohlantirish kerak.
+    assert.equal(amox.forecast?.enough, false);
+    assert.equal(amox.forecast?.runOutDate, time.addDays(D2, 2));
+    assert.ok(amox.low);
+    assert.equal(items[0].medication.name, 'Amox'); // tugayotgani — birinchi
+
+    reset();
+    const night = await runScheduledJobs(telegram, at(D2, '23:30'));
+    assert.equal(night.lowStock, 0); // tunda yuborilmaydi
+    const r = await runScheduledJobs(telegram, at(D2, '10:00'));
+    assert.equal(r.lowStock, 1);
+    const msg = sent().find((c) => c.payload.chat_id === 777004 && /tugab qolyapti/.test(String(c.payload.text)))!;
+    assert.match(String(msg.payload.text), /Amox/);
+    assert.match(JSON.stringify(msg.payload.reply_markup), /st:a:/);
+    const again = await runScheduledJobs(telegram, at(D2, '11:00'));
+    assert.equal(again.lowStock, 0);
+
+    // Sotib oldi: +20 -> kurs oxirigacha yetadi, keyingi ogohlantirish uchun belgi tozalanadi.
+    const amoxMed = await prisma.medication.findFirstOrThrow({ where: { name: 'Amox' } });
+    const refilled = await S.addStock(u, amoxMed.id, 20);
+    assert.equal(refilled.stock, 24);
+    assert.equal(refilled.lowStockNotifiedAt, null);
+    const after = (await S.listStock(u, at(D2, '12:00'))).find((i) => i.medication.id === amoxMed.id)!;
+    assert.equal(after.forecast?.enough, true);
+    await assert.rejects(() => S.addStock(u, amoxMed.id, -3), /err.stockQty/);
+  });
+
+  await test("«Kerak bo'lganda»: qayd, chegaradan oshish, takror va bekor qilish; rioyaga kirmaydi", async () => {
+    const p = await P.createPrescription(
+      u4,
+      P.validatePrescription(
+        {
+          title: 'Og\'riq',
+          days: 3,
+          startDate: D2,
+          medications: [{ name: 'Nurofen', dosage: '1 tabletka', times: [], asNeeded: true, maxPerDay: 2, stock: 6 }],
+        },
+        D2
+      ),
+      at(D2, '07:00')
+    );
+    const med = p.medications[0];
+    assert.equal(await prisma.dose.count({ where: { medicationId: med.id } }), 0);
+    const first = await logAsNeeded(u4, med.id, at(D2, '09:00'));
+    assert.equal(first.dose.status, 'TAKEN');
+    assert.equal(first.overLimit, false);
+    await assert.rejects(() => logAsNeeded(u4, med.id, at(D2, '09:00')), /err.prnDuplicate/);
+    await logAsNeeded(u4, med.id, at(D2, '13:00'));
+    const third = await logAsNeeded(u4, med.id, at(D2, '18:00'));
+    assert.equal(third.countToday, 3);
+    assert.equal(third.overLimit, true);
+    assert.equal((await prisma.medication.findUniqueOrThrow({ where: { id: med.id } })).stock, 3);
+    // Bekor qilish — qayd o'chadi, zaxira qaytadi.
+    await markDose(u4, third.dose.id, 'undo', at(D2, '18:05'));
+    assert.equal(await prisma.dose.count({ where: { medicationId: med.id } }), 2);
+    assert.equal((await prisma.medication.findUniqueOrThrow({ where: { id: med.id } })).stock, 4);
+    // Jadvalli doriga "hozir ichdim" qilib bo'lmaydi.
+    const amoxMed = await prisma.medication.findFirstOrThrow({ where: { name: 'Amox' } });
+    await assert.rejects(() => logAsNeeded(u4, amoxMed.id, at(D2, '10:00')), /err.notAsNeeded/);
+    // Eslatma yuborilmaydi, "belgilanmadi" bo'lmaydi.
+    reset();
+    await runScheduledJobs(telegram, at(D2, '23:59'));
+    assert.equal((await prisma.dose.count({ where: { medicationId: med.id, status: 'TAKEN' } })), 2);
+    // Statistikada "ichilgan" sifatida sanalmaydi (rioya foizini sun'iy oshirmaydi).
+    const stats = await getUserStats(await prisma.user.findUniqueOrThrow({ where: { id: u4.id } }), 7, at(D2, '23:59'));
+    assert.ok(!stats.medications.some((m) => m.name === 'Nurofen'));
+  });
+
+  await test('Hafta kunlari: dozalar faqat tanlangan kunlarda', async () => {
+    const p = await P.createPrescription(
+      u4,
+      P.validatePrescription(
+        { title: 'W', days: 14, startDate: D2, medications: [{ name: 'Vit D', times: ['10:00'], weekdays: [1, 4] }] },
+        D2
+      ),
+      at(D2, '07:00')
+    );
+    const dates = (await prisma.dose.findMany({ where: { medicationId: p.medications[0].id }, orderBy: { date: 'asc' } })).map(
+      (d) => d.date
+    );
+    assert.equal(dates.length, 4); // 2 hafta × (Du, Pa)
+    assert.ok(dates.every((d) => [1, 4].includes(time.weekday(d))));
+  });
+
+  // -------------------------------------------------------------------------
+  console.log('\nTillar, admin, monitoring');
+
+  await test('Rus tili: menyu, eslatma va xatolar ruscha; eski tildagi tugmalar ham ishlaydi', async () => {
+    reset();
+    await press('lang:ru');
+    assert.equal((await prisma.user.findUniqueOrThrow({ where: { telegramId: BigInt(TG_ID) } })).language, 'ru');
+    assert.match(JSON.stringify(sent()), /Главное меню|Лекарства на сегодня/);
+    reset();
+    await sendText('📦 Запас');
+    assert.match(lastText(), /Запас лекарств/);
+    await sendText('📦 Zaxira'); // o'zbekcha tugma (eski klaviatura) ham taniladi
+    assert.match(lastText(), /Запас лекарств/);
+    // Ruscha dialog: "С сегодня", "2 раза"
+    reset();
+    await sendText('➕ Новый рецепт');
+    assert.match(lastText(), /Новый рецепт/);
+    await sendText('❌ Отмена');
+    assert.match(lastText(), /Отменено/);
+
+    // Eslatma ham ruscha keladi.
+    const ruUser = await prisma.user.findUniqueOrThrow({ where: { telegramId: BigInt(TG_ID) } });
+    const p = await P.createPrescription(
+      ruUser,
+      P.validatePrescription({ title: 'RU', days: 1, startDate: D2, medications: [{ name: 'Аспирин', times: ['15:00'] }] }, D2),
+      at(D2, '07:00')
+    );
+    reset();
+    await runScheduledJobs(telegram, at(D2, '15:00'));
+    const reminder = sent().find((c) => c.payload.chat_id === TG_ID)!;
+    assert.match(String(reminder.payload.text), /Время принять лекарство/);
+    assert.match(JSON.stringify(reminder.payload.reply_markup), /Принял/);
+    await P.deletePrescription(ruUser.id, p.id);
+    // O'zbek kirill
+    await press('lang:uz_cyrl');
+    reset();
+    await sendText('ℹ️ Yordam');
+    assert.match(String(sent()[0].payload.text), /Соғлом Ҳаёт қандай ишлайди/);
+    await press('lang:uz');
+  });
+
+  await test("Admin: faqat ADMIN_TELEGRAM_IDS dagilar; bitta tugma bilan foydalanuvchi rejimiga o'tish", async () => {
+    process.env.ADMIN_TELEGRAM_IDS = `${TG_ID}, 123`;
+    reset();
+    await sendText('/admin');
+    assert.match(lastText(), /Admin panel/);
+    assert.match(lastText(), /Foydalanuvchilar: <b>\d+<\/b>/);
+    // Admin rejimida pastki menyuda "Admin panel" tugmasi bor.
+    await sendText('/start');
+    assert.match(JSON.stringify(sent().map((c) => c.payload.reply_markup)), /Admin panel/);
+    reset();
+    await press('adm:u');
+    assert.equal((await prisma.user.findUniqueOrThrow({ where: { telegramId: BigInt(TG_ID) } })).adminMode, false);
+    assert.match(lastText(), /Foydalanuvchi rejimi/);
+    assert.doesNotMatch(JSON.stringify(sent().at(-1)?.payload.reply_markup), /Admin panel/);
+    reset();
+    await sendText('/admin'); // qaytish
+    assert.equal((await prisma.user.findUniqueOrThrow({ where: { telegramId: BigInt(TG_ID) } })).adminMode, true);
+    assert.match(lastText(), /Admin panel/);
+    // Admin bo'lmagan foydalanuvchi uchun /admin — oddiy menyu.
+    const stranger = { id: 777099, is_bot: false, first_name: 'Begona' };
+    reset();
+    await bot.handleUpdate({
+      update_id: updateId++,
+      message: { message_id: 1, date: 0, chat: { id: 777099, type: 'private', first_name: 'Begona' }, from: stranger, text: '/admin', entities: [{ type: 'bot_command', offset: 0, length: 6 }] },
+    } as never);
+    assert.doesNotMatch(lastText(), /Admin panel/);
+  });
+
+  const adminRoute = await import('../app/api/app/admin/route');
+  const meRoute = await import('../app/api/app/me/route');
+  const stockRoute = await import('../app/api/app/stock/route');
+
+  await test('API: admin paneli (403 / 200), profil, zaxira', async () => {
+    const denied = await call(adminRoute, 'GET', 'admin?view=overview', undefined, 777002);
+    assert.equal(denied.status, 403);
+    const overview = await call(adminRoute, 'GET', 'admin?view=overview');
+    assert.equal(overview.status, 200, JSON.stringify(overview.json));
+    assert.ok((overview.json.users as { total: number }).total >= 4);
+    assert.equal((overview.json.newByDay as unknown[]).length, 14);
+    const users = await call(adminRoute, 'GET', 'admin?view=users&q=Zaxira&page=0');
+    assert.deepEqual((users.json.users as { name: string }[]).map((u) => u.name), ['Zaxira']);
+    const me = await call(meRoute, 'GET', 'me');
+    assert.deepEqual(me.json, { lang: 'uz', isAdmin: true, adminMode: true });
+    const off = await call(adminRoute, 'POST', 'admin', { adminMode: false });
+    assert.equal(off.json.adminMode, false);
+    await call(adminRoute, 'POST', 'admin', { adminMode: true });
+
+    const stock = await call(stockRoute, 'GET', 'stock', undefined, 777004);
+    const amox = (stock.json.items as { id: string; name: string; stock: number }[]).find((i) => i.name === 'Amox')!;
+    const set = await call(stockRoute, 'POST', 'stock', { id: amox.id, action: 'set', stock: 7.5, unit: 'tablet', unitsPerDose: 0.5, refillDays: 5 }, 777004);
+    assert.equal(set.status, 200, JSON.stringify(set.json));
+    assert.equal(set.json.stock, 7.5);
+    const foreign = await call(stockRoute, 'POST', 'stock', { id: amox.id, action: 'add', amount: 10 });
+    assert.equal(foreign.status, 404);
+    const bad = await call(stockRoute, 'POST', 'stock', { id: amox.id, action: 'set', stock: -1 }, 777004);
+    assert.equal(bad.status, 400);
+  });
+
+  const system = await import('../lib/services/system');
+  const healthRoute = await import('../app/api/health/route');
+
+  await test("Monitoring: cron to'xtasa adminga ogohlantirish, tiklansa xabar; /api/health", async () => {
+    await system.recordCronRun(telegram, { startedAt: new Date(), result: { reminders: 0 } });
+    let health = await healthRoute.GET();
+    assert.equal(health.status, 200);
+
+    // Cron 20 daqiqadan beri ishlamayapti.
+    await prisma.systemState.update({
+      where: { key: 'cron' },
+      data: { value: { at: new Date(Date.now() - 20 * 60_000).toISOString(), durationMs: 1, result: null, error: null, errorAt: null } },
+    });
+    // /api/health eskirganini ko'radi (503) va adminlarga ogohlantiradi.
+    reset();
+    health = await healthRoute.GET();
+    assert.equal(health.status, 503);
+    const alert = sent().find((c) => c.payload.chat_id === TG_ID);
+    assert.match(String(alert?.payload.text), /cron .* ishlamayapti/);
+    // Soatiga bir martadan ko'p emas.
+    reset();
+    await system.cronWatchdog(telegram, { force: true });
+    assert.equal(sent().filter((c) => c.payload.chat_id === TG_ID).length, 0);
+    // Tiklandi.
+    reset();
+    await system.recordCronRun(telegram, { startedAt: new Date(), result: { reminders: 1 } });
+    assert.match(String(sent().find((c) => c.payload.chat_id === TG_ID)?.payload.text), /qayta ishlayapti/);
+    // Xato bilan tugasa — adminga xabar.
+    reset();
+    await system.recordCronRun(telegram, { startedAt: new Date(), error: new Error('DB <timeout>') });
+    assert.match(String(sent().find((c) => c.payload.chat_id === TG_ID)?.payload.text), /DB &lt;timeout&gt;/);
+    delete process.env.ADMIN_TELEGRAM_IDS;
   });
 
   await prisma.$disconnect();

@@ -2,49 +2,39 @@
 
 import Script from 'next/script';
 import { useCallback, useEffect, useState } from 'react';
-import { invalidateAll } from './api';
+import type { Key } from '@/lib/i18n';
+import type { MeView } from '@/lib/webapp/types';
+import { api } from './api';
+import { AdminScreen } from './screens/admin';
 import { NewPrescriptionScreen } from './screens/new-prescription';
 import { PrescriptionScreen } from './screens/prescription';
 import { PrescriptionsScreen } from './screens/prescriptions';
 import { SettingsScreen } from './screens/settings';
 import { StatsScreen } from './screens/stats';
+import { StockScreen } from './screens/stock';
 import { TodayScreen } from './screens/today';
+import { TABS, useApp, useT, type Tab } from './store';
 import { applyTheme, getWebApp, haptic, safely } from './telegram';
 import { Icon, Toast } from './ui';
 
-export type Tab = 'today' | 'rx' | 'stats' | 'settings';
-type Screen = { name: 'rx'; id: string } | { name: 'new' };
-
-const TABS: { key: Tab; label: string; icon: () => React.JSX.Element }[] = [
-  { key: 'today', label: 'Bugun', icon: Icon.tabToday },
-  { key: 'rx', label: 'Retseptlar', icon: Icon.tabRx },
-  { key: 'stats', label: 'Hisobot', icon: Icon.tabStats },
-  { key: 'settings', label: 'Sozlamalar', icon: Icon.tabSettings },
-];
+const TAB_META: Record<Tab, { label: Key; icon: () => React.JSX.Element }> = {
+  today: { label: 'app.tab.today', icon: Icon.tabToday },
+  rx: { label: 'app.tab.rx', icon: Icon.tabRx },
+  stock: { label: 'app.tab.stock', icon: Icon.tabStock },
+  stats: { label: 'app.tab.stats', icon: Icon.tabStats },
+  settings: { label: 'app.tab.settings', icon: Icon.tabSettings },
+  admin: { label: 'app.tab.admin', icon: Icon.tabAdmin },
+};
 
 function initialTab(): Tab {
-  if (typeof window === 'undefined') return 'today';
   const t = new URLSearchParams(window.location.search).get('tab');
-  return TABS.some((x) => x.key === t) ? (t as Tab) : 'today';
-}
-
-// Ekranlarga beriladigan umumiy amallar.
-export interface Nav {
-  openPrescription: (id: string) => void;
-  openNew: () => void;
-  goTab: (tab: Tab) => void;
-  back: () => void;
-  toast: (text: string) => void;
-  // Ma'lumot o'zgargach (doza belgilandi, retsept qo'shildi) — barcha ekranlar keshini tozalash.
-  changed: () => void;
+  return TABS.includes(t as Tab) ? (t as Tab) : 'today';
 }
 
 export function MiniApp() {
   const [status, setStatus] = useState<'loading' | 'ready' | 'outside'>('loading');
-  const [tab, setTab] = useState<Tab>('today');
-  const [screen, setScreen] = useState<Screen | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
-  const clearToast = useCallback(() => setToast(null), []);
+  const t = useT();
+  const { tab, screen, toast, adminMode, goTab, open, clearToast, setMe } = useApp();
 
   const init = useCallback(() => {
     const tg = getWebApp();
@@ -59,15 +49,19 @@ export function MiniApp() {
     });
     applyTheme(tg);
     tg.onEvent('themeChanged', () => applyTheme(tg));
-    setTab(initialTab());
-    setStatus('ready');
-  }, []);
+    useApp.setState({ tab: initialTab() });
+    // Til va admin huquqi — birinchi chizishdan oldin (matnlar birdan to'g'ri tilda chiqishi uchun).
+    api<MeView>('me')
+      .then(setMe)
+      .catch(() => {})
+      .finally(() => setStatus('ready'));
+  }, [setMe]);
 
   // Telegram'ning "orqaga" tugmasi ichki ekranlarda.
   useEffect(() => {
     const tg = getWebApp();
     if (!tg || status !== 'ready' || !tg.isVersionAtLeast('6.1')) return;
-    const back = () => setScreen(null);
+    const back = () => open(null);
     if (screen) {
       tg.BackButton.show();
       tg.onEvent('backButtonClicked', back);
@@ -75,24 +69,7 @@ export function MiniApp() {
       tg.BackButton.hide();
     }
     return () => tg.offEvent('backButtonClicked', back);
-  }, [screen, status]);
-
-  const openScreen = (next: Screen | null) => {
-    setScreen(next);
-    window.scrollTo(0, 0);
-  };
-
-  const nav: Nav = {
-    openPrescription: (id) => openScreen({ name: 'rx', id }),
-    openNew: () => openScreen({ name: 'new' }),
-    goTab: (t) => {
-      openScreen(null);
-      setTab(t);
-    },
-    back: () => openScreen(null),
-    toast: setToast,
-    changed: invalidateAll,
-  };
+  }, [screen, status, open]);
 
   const script = (
     <Script
@@ -114,58 +91,64 @@ export function MiniApp() {
         ) : (
           <div className="center-state">
             <b>🌿 Sog'lom Hayot</b>
-            <div>
-              Bu ilova Telegram ichida ishlaydi. Botga <b style={{ fontSize: 'inherit' }}>/start</b> yozing va
-              "📱 Ilovani ochish" tugmasini bosing.
-            </div>
+            <div>{t('app.outside')}</div>
           </div>
         )}
       </div>
     );
   }
 
+  const tabs = TABS.filter((k) => k !== 'admin' || adminMode);
+  const current = tab === 'admin' && !adminMode ? 'today' : tab;
+
   let body: React.ReactNode;
   let contentClass = 'content';
   if (screen?.name === 'rx') {
-    body = <PrescriptionScreen id={screen.id} nav={nav} />;
+    body = <PrescriptionScreen id={screen.id} />;
     contentClass += ' no-tabs';
   } else if (screen?.name === 'new') {
-    body = <NewPrescriptionScreen nav={nav} />;
+    body = <NewPrescriptionScreen />;
     contentClass += ' with-bar';
-  } else if (tab === 'today') {
-    body = <TodayScreen nav={nav} />;
-  } else if (tab === 'rx') {
-    body = <PrescriptionsScreen nav={nav} />;
-  } else if (tab === 'stats') {
+  } else if (current === 'today') {
+    body = <TodayScreen />;
+  } else if (current === 'rx') {
+    body = <PrescriptionsScreen />;
+  } else if (current === 'stock') {
+    body = <StockScreen />;
+  } else if (current === 'stats') {
     body = <StatsScreen />;
+  } else if (current === 'admin') {
+    body = <AdminScreen />;
   } else {
-    body = <SettingsScreen nav={nav} />;
+    body = <SettingsScreen />;
   }
 
   return (
     <div className="app">
       {script}
-      <main className={contentClass} key={screen ? `${screen.name}-${'id' in screen ? screen.id : ''}` : tab}>
+      <main className={contentClass} key={screen ? `${screen.name}-${'id' in screen ? screen.id : ''}` : current}>
         {body}
       </main>
 
       {!screen && (
-        <nav className="tabbar">
-          {TABS.map(({ key, label, icon: TabIcon }) => (
-            <button
-              key={key}
-              type="button"
-              className={`tab ${tab === key ? 'on' : ''}`}
-              onClick={() => {
-                if (tab !== key) haptic.select();
-                setTab(key);
-                window.scrollTo(0, 0);
-              }}
-            >
-              <TabIcon />
-              {label}
-            </button>
-          ))}
+        <nav className="tabbar" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
+          {tabs.map((key) => {
+            const { label, icon: TabIcon } = TAB_META[key];
+            return (
+              <button
+                key={key}
+                type="button"
+                className={`tab ${current === key ? 'on' : ''}`}
+                onClick={() => {
+                  if (current !== key) haptic.select();
+                  goTab(key);
+                }}
+              >
+                <TabIcon />
+                {t(label)}
+              </button>
+            );
+          })}
         </nav>
       )}
 

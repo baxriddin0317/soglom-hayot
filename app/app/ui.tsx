@@ -1,33 +1,39 @@
 'use client';
 
 import { useEffect, useState, type ReactNode } from 'react';
-import { MEAL_SHORT, type Meal } from '@/lib/constants';
+import { MEAL_SHORT_KEY, type Meal, type StockUnit } from '@/lib/constants';
+import type { Key, T } from '@/lib/i18n';
+import { formatQty } from '@/lib/time';
 import type { DoseStatus } from '@/lib/webapp/types';
+import { useT } from './store';
 
 // ---------------------------------------------------------------------------
 // Matn yordamchilari
 // ---------------------------------------------------------------------------
 
-export const STATUS_LABEL: Record<DoseStatus, string> = {
-  PENDING: 'Kutilmoqda',
-  TAKEN: 'Ichildi',
-  SKIPPED: "O'tkazildi",
-  MISSED: 'Belgilanmadi',
-};
-
-export function medMeta(m: { dosage: string | null; meal: Meal }): string {
-  return [m.dosage, MEAL_SHORT[m.meal]].filter(Boolean).join(' · ');
+export function statusLabel(status: DoseStatus, t: T): string {
+  return t(`statusLabel.${status}` as Key);
 }
 
-/** "2 soat 15 daqiqa" / "45 daqiqa" / "hozir" */
-export function untilText(iso: string, now: number): string {
+export function medMeta(m: { dosage: string | null; meal: Meal }, t: T): string {
+  const meal = MEAL_SHORT_KEY[m.meal];
+  return [m.dosage, meal ? t(meal) : null].filter(Boolean).join(' · ');
+}
+
+/** "20 tabletka" / "2,5 мл" (t — joriy tildagi tarjima). */
+export function qtyText(qty: number, unit: StockUnit, t: T): string {
+  return t(`unit.${unit}` as Key, { n: formatQty(qty) });
+}
+
+/** "2 soat 15 daqiqadan so'ng" / "45 daqiqadan so'ng" / "hozir" */
+export function untilText(iso: string, now: number, t: T): string {
   const minutes = Math.round((new Date(iso).getTime() - now) / 60_000);
-  if (minutes <= 0) return 'hozir';
-  if (minutes < 60) return `${minutes} daqiqadan so'ng`;
+  if (minutes <= 0) return t('app.until.now');
+  if (minutes < 60) return t('app.until.min', { n: minutes });
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
-  if (h >= 24) return `${Math.floor(h / 24)} kundan so'ng`;
-  return m ? `${h} soat ${m} daqiqadan so'ng` : `${h} soatdan so'ng`;
+  if (h >= 24) return t('app.until.day', { n: Math.floor(h / 24) });
+  return m ? t('app.until.hourMin', { h, m }) : t('app.until.hour', { h });
 }
 
 export function pctClass(p: number | null): string {
@@ -58,13 +64,14 @@ export function Loading() {
 }
 
 export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  const t = useT();
   return (
     <div className="center-state">
-      <b>Yuklab bo'lmadi</b>
+      <b>{t('app.loadFailed')}</b>
       <div>{message}</div>
       {onRetry && (
         <button type="button" className="btn quiet" style={{ maxWidth: 240, marginTop: 8 }} onClick={onRetry}>
-          Qayta urinish
+          {t('app.retry')}
         </button>
       )}
     </div>
@@ -119,6 +126,7 @@ export function ProgressBar({ value, ok }: { value: number; ok?: boolean }) {
 
 /** Kunlik halqa: ichilgan / o'tkazilgan / belgilanmagan ulushlari. */
 export function DayRing({ taken, skipped, missed, total }: { taken: number; skipped: number; missed: number; total: number }) {
+  const t = useT();
   const r = 36;
   const c = 2 * Math.PI * r;
   const parts = [
@@ -156,7 +164,7 @@ export function DayRing({ taken, skipped, missed, total }: { taken: number; skip
         <div className="ring-num">
           {taken}/{total}
         </div>
-        <div className="ring-unit">ichildi</div>
+        <div className="ring-unit">{t('app.ring.taken')}</div>
       </div>
     </div>
   );
@@ -245,6 +253,18 @@ export const Icon = {
       <path d="M5 19V11" />
       <path d="M12 19V5" />
       <path d="M19 19v-5" />
+    </svg>
+  ),
+  tabStock: () => (
+    <svg width="24" height="24" viewBox="0 0 24 24" {...stroke} strokeWidth="1.8" aria-hidden="true">
+      <path d="M4 8l8-4 8 4v8l-8 4-8-4z" />
+      <path d="M4 8l8 4 8-4M12 12v8" />
+    </svg>
+  ),
+  tabAdmin: () => (
+    <svg width="24" height="24" viewBox="0 0 24 24" {...stroke} strokeWidth="1.8" aria-hidden="true">
+      <path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" />
+      <path d="M9 12l2 2 4-4" />
     </svg>
   ),
   tabSettings: () => (

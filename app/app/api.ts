@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { t } from '@/lib/i18n';
+import { useApp } from './store';
 import { getWebApp } from './telegram';
 
 export class ApiRequestError extends Error {
@@ -27,12 +29,13 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
       cache: 'no-store',
     });
   } catch {
-    throw new ApiRequestError("Internet aloqasini tekshiring va qayta urinib ko'ring.", 0);
+    throw new ApiRequestError(t(useApp.getState().lang, 'common.network'), 0);
   }
 
   const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
   if (!res.ok) {
-    throw new ApiRequestError(data.error || "Xatolik yuz berdi. Qayta urinib ko'ring.", res.status, data.code);
+    const fallback = t(useApp.getState().lang, res.status === 401 ? 'err.unauthorized' : 'common.error');
+    throw new ApiRequestError(res.status === 401 ? fallback : data.error || fallback, res.status, data.code);
   }
   return data as T;
 }

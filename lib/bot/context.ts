@@ -1,6 +1,8 @@
 import type { Context, MiddlewareFn } from 'telegraf';
 import type { User } from '@/lib/generated/prisma/client';
-import { setBlocked, upsertUser } from '@/lib/services/users';
+import { langOf, translator, type Lang, type T } from '@/lib/i18n';
+import { mainKeyboard } from '@/lib/bot/keyboards';
+import { inAdminMode, setBlocked, upsertUser } from '@/lib/services/users';
 
 // Har bir update uchun foydalanuvchi bazadan olinadi (bo'lmasa yaratiladi) va ctx.state.user ga
 // qo'yiladi. Handler'lar `currentUser(ctx)` orqali oladi.
@@ -9,6 +11,22 @@ export function currentUser(ctx: Context): User {
   const user = ctx.state.user as User | undefined;
   if (!user) throw new Error('ctx.state.user yo\'q — userMiddleware ulanmagan');
   return user;
+}
+
+/** Foydalanuvchi tili. */
+export function langFor(ctx: Context): Lang {
+  return langOf(currentUser(ctx));
+}
+
+/** Foydalanuvchi tiliga bog'langan tarjima funksiyasi. */
+export function trFor(ctx: Context): T {
+  return translator(langFor(ctx));
+}
+
+/** Asosiy menyu klaviaturasi (admin rejimida "Admin panel" tugmasi bilan). */
+export function menuFor(ctx: Context) {
+  const user = currentUser(ctx);
+  return mainKeyboard(langOf(user), { admin: inAdminMode(user) });
 }
 
 export const userMiddleware: MiddlewareFn<Context> = async (ctx, next) => {

@@ -323,3 +323,30 @@ textarea.input { height: auto; min-height: 70px; padding: 10px 12px; resize: ver
   font-size: 15px; text-align: right; cursor: pointer; max-width: 60%; padding: 0;
 }
 .disclaimer { font-size: 12.5px; color: var(--hint); padding: 14px 16px 0; line-height: 1.4; text-align: center; }
+
+/* --- zaxira --- */
+.banner.bad { background: var(--bad-soft); }
+.banner.bad svg { color: var(--bad); flex-shrink: 0; width: 18px; height: 18px; }
+.stock-row { padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+.stock-row + .stock-row { border-top: 1px solid var(--sep); }
+.stock-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; cursor: pointer; }
+.stock-main { min-width: 0; }
+.stock-qty { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; flex-shrink: 0; text-align: right; }
+.stock-status { align-self: flex-start; font-size: 12.5px; font-weight: 600; padding: 4px 9px; border-radius: 10px; }
+.stock-status.tone-ok { background: var(--ok-soft); color: var(--ok); }
+.stock-status.tone-warn { background: var(--warn-soft); color: var(--warn); }
+.stock-status.tone-bad { background: var(--bad-soft); color: var(--bad); }
+.stock-status.tone-none { background: var(--seg-bg); color: var(--hint); }
+.stock-qty.tone-bad { color: var(--bad); }
+.stock-qty.tone-warn { color: var(--warn); }
+.field-flat { display: flex; flex-direction: column; gap: 8px; }
+.input.qty { width: 90px; text-align: center; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.chip:disabled { opacity: 0.5; }
+.chip.day { min-width: 44px; justify-content: center; }
+
+/* --- admin --- */
+.urow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 16px; border-top: 1px solid var(--sep); }
+.urow-main { min-width: 0; }
+.urow .row-k { font-size: 15px; overflow-wrap: anywhere; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
+.tab { font-size: 10px; }

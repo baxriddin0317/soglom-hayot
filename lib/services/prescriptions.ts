@@ -1,8 +1,19 @@
 import { db } from '@/lib/db';
 import { AppError } from '@/lib/errors';
 import type { Medication, Prescription, Prisma, User } from '@/lib/generated/prisma/client';
-import { LIMITS, MEALS, type Meal } from '@/lib/constants';
-import { addDays, dateIn, daysInclusive, isDateString, isTimeString, safeTimeZone, zonedToUtc } from '@/lib/time';
+import { isStockUnit, LIMITS, MEALS, parseDosage, type Meal, type StockUnit } from '@/lib/constants';
+import {
+  addDays,
+  dateIn,
+  daysInclusive,
+  formatDate,
+  isDateString,
+  isScheduledOn,
+  isTimeString,
+  MAX_TIMES_PER_DAY,
+  safeTimeZone,
+  zonedToUtc,
+} from '@/lib/time';
 
 // ---------------------------------------------------------------------------
 // Kiritilgan ma'lumotni tekshirish (bot ham, Mini App ham shu funksiyadan o'tadi)
@@ -12,9 +23,20 @@ export interface MedicationInput {
   name: string;
   dosage: string | null;
   meal: Meal;
+  // Kunlik qabul vaqtlari. "Kerak bo'lganda" dorida — bo'sh.
   times: string[];
   // null — butun kurs davomida.
   days: number | null;
+  // 1 — har kuni, 2 — kun ora, 3 — har 3 kunda.
+  everyDays: number;
+  // Haftaning aniq kunlari (0 = yakshanba). Bo'sh — har kuni (everyDays bo'yicha).
+  weekdays: number[];
+  asNeeded: boolean;
+  maxPerDay: number | null;
+  // Zaxira (ixtiyoriy): qo'ldagi miqdor, o'lchov birligi va bir martalik sarf.
+  stock: number | null;
+  stockUnit: StockUnit | null;
+  unitsPerDose: number;
 }
 
 export interface PrescriptionInput {
@@ -35,30 +57,77 @@ function toInt(value: unknown): number | null {
   return typeof n === 'number' && Number.isInteger(n) ? n : null;
 }
 
+function toNumber(value: unknown): number | null {
+  const n = typeof value === 'string' ? Number(value.trim().replace(',', '.')) : value;
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+}
+
+/** Zaxira miqdori: bo'sh — kuzatilmaydi (null), aks holda 0..maxStock. */
+export function parseStockQty(value: unknown): number | null | undefined {
+  if (value === null || value === undefined || value === '') return null;
+  const n = toNumber(value);
+  if (n === null || n < 0 || n > LIMITS.maxStock) return undefined;
+  return Math.round(n * 100) / 100;
+}
+
 export function validateMedication(raw: unknown, courseDays: number, index = 0): MedicationInput {
   const m = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-  const label = `${index + 1}-dori`;
 
   const name = cleanText(m.name, LIMITS.nameLength);
-  if (!name) throw new AppError(`${label}: nomini kiriting`);
+  if (!name) throw new AppError('err.medName', { n: index + 1 });
 
   const dosage = cleanText(m.dosage, 40) || null;
   const meal = MEALS.includes(m.meal as Meal) ? (m.meal as Meal) : 'ANY';
+  const asNeeded = m.asNeeded === true;
 
-  if (!Array.isArray(m.times) || m.times.length === 0) throw new AppError(`${name}: kamida bitta vaqt tanlang`);
-  if (!m.times.every(isTimeString)) throw new AppError(`${name}: vaqt formati noto'g'ri (masalan 08:00)`);
-  const times = [...new Set(m.times as string[])].sort();
-  if (times.length > 8) throw new AppError(`${name}: kuniga ko'pi bilan 8 marta`);
+  let times: string[] = [];
+  let everyDays = 1;
+  let weekdays: number[] = [];
+  let maxPerDay: number | null = null;
+
+  if (asNeeded) {
+    if (m.maxPerDay !== null && m.maxPerDay !== undefined && m.maxPerDay !== '') {
+      maxPerDay = toInt(m.maxPerDay);
+      if (maxPerDay === null || maxPerDay < 1 || maxPerDay > 24) throw new AppError('err.medMaxPerDay', { name });
+    }
+  } else {
+    if (!Array.isArray(m.times) || m.times.length === 0) throw new AppError('err.medTimes', { name });
+    if (!m.times.every(isTimeString)) throw new AppError('err.medTimeFormat', { name });
+    times = [...new Set(m.times as string[])].sort();
+    if (times.length > MAX_TIMES_PER_DAY) throw new AppError('err.medMaxTimes', { name, max: MAX_TIMES_PER_DAY });
+
+    if (m.everyDays !== undefined && m.everyDays !== null) {
+      const n = toInt(m.everyDays);
+      if (n === null || n < 1 || n > 7) throw new AppError('err.medEveryDays', { name });
+      everyDays = n;
+    }
+    if (Array.isArray(m.weekdays) && m.weekdays.length > 0) {
+      if (!m.weekdays.every((d) => Number.isInteger(d) && (d as number) >= 0 && (d as number) <= 6)) {
+        throw new AppError('err.medWeekdays', { name });
+      }
+      weekdays = [...new Set(m.weekdays as number[])].sort();
+      // Haftaning hamma kuni tanlangan bo'lsa — oddiy "har kuni".
+      if (weekdays.length === 7) weekdays = [];
+      everyDays = 1;
+    }
+  }
 
   let days: number | null = null;
   if (m.days !== null && m.days !== undefined && m.days !== '') {
     days = toInt(m.days);
-    if (days === null || days < 1) throw new AppError(`${name}: davomiylik noto'g'ri`);
-    if (days > courseDays) throw new AppError(`${name}: davomiylik kursdan (${courseDays} kun) uzun bo'lmasin`);
+    if (days === null || days < 1) throw new AppError('err.medDays', { name });
+    if (days > courseDays) throw new AppError('err.medDaysLong', { name, days: courseDays });
     if (days === courseDays) days = null;
   }
 
-  return { name, dosage, meal, times, days };
+  const parsed = parseDosage(dosage);
+  const stock = parseStockQty(m.stock);
+  if (stock === undefined) throw new AppError('err.medStock', { name });
+  const stockUnit = isStockUnit(m.stockUnit) ? m.stockUnit : stock !== null ? parsed.unit : null;
+  const perDose = toNumber(m.unitsPerDose);
+  const unitsPerDose = perDose !== null && perDose > 0 && perDose <= 1000 ? perDose : parsed.amount;
+
+  return { name, dosage, meal, times, days, everyDays, weekdays, asNeeded, maxPerDay, stock, stockUnit, unitsPerDose };
 }
 
 export function validatePrescription(raw: unknown, today: string): PrescriptionInput {
@@ -70,20 +139,20 @@ export function validatePrescription(raw: unknown, today: string): PrescriptionI
 
   const days = toInt(p.days);
   if (days === null || days < 1 || days > LIMITS.maxCourseDays) {
-    throw new AppError(`Davolanish muddati 1–${LIMITS.maxCourseDays} kun bo'lishi kerak`);
+    throw new AppError('err.courseDays', { max: LIMITS.maxCourseDays });
   }
 
   const startDate = p.startDate === undefined ? today : p.startDate;
-  if (!isDateString(startDate)) throw new AppError("Boshlanish sanasi noto'g'ri");
+  if (!isDateString(startDate)) throw new AppError('err.startDate');
   if (startDate < addDays(today, -LIMITS.editableDaysBack) || startDate > addDays(today, 60)) {
-    throw new AppError('Boshlanish sanasi bugundan 60 kun ichida bo\'lishi kerak');
+    throw new AppError('err.startRange');
   }
 
   if (!Array.isArray(p.medications) || p.medications.length === 0) {
-    throw new AppError("Kamida bitta dori qo'shing");
+    throw new AppError('err.noMeds');
   }
   if (p.medications.length > LIMITS.medicationsPerPrescription) {
-    throw new AppError(`Bitta retseptda ko'pi bilan ${LIMITS.medicationsPerPrescription} ta dori`);
+    throw new AppError('err.maxMeds', { n: LIMITS.medicationsPerPrescription });
   }
   const medications = p.medications.map((m, i) => validateMedication(m, days, i));
 
@@ -99,9 +168,15 @@ export function validatePrescription(raw: unknown, today: string): PrescriptionI
 export const PAST_GRACE_MS = 60 * 60_000;
 const CREATE_CHUNK = 2000;
 
-type PlannableMedication = Pick<Medication, 'id' | 'userId' | 'times' | 'startDate' | 'endDate'>;
+type PlannableMedication = Pick<
+  Medication,
+  'id' | 'userId' | 'times' | 'startDate' | 'endDate' | 'everyDays' | 'weekdays' | 'asNeeded'
+>;
 
-/** Dori uchun `fromDate` (default: bugun) dan kurs oxirigacha bo'lgan dozalar ro'yxati. Toza funksiya. */
+/**
+ * Dori uchun `fromDate` (default: bugun) dan kurs oxirigacha bo'lgan dozalar ro'yxati. Toza funksiya.
+ * "Kerak bo'lganda" dorisi uchun reja yo'q; kun ora / hafta kunlari hisobga olinadi.
+ */
 export function planDoses(
   med: PlannableMedication,
   timezone: string,
@@ -114,8 +189,10 @@ export function planDoses(
   const start = med.startDate > first ? med.startDate : first;
   const cutoff = now.getTime() - PAST_GRACE_MS;
   const out: Prisma.DoseCreateManyInput[] = [];
+  if (med.asNeeded) return out;
 
   for (let date = start; date <= med.endDate; date = addDays(date, 1)) {
+    if (!isScheduledOn(med, date)) continue;
     for (const time of med.times) {
       const scheduledAt = zonedToUtc(date, time, tz);
       if (!includePast && scheduledAt.getTime() < cutoff) continue;
@@ -150,10 +227,7 @@ async function dropFutureDoses(client: Tx, where: Prisma.DoseWhereInput, now: Da
 export async function createPrescription(user: User, input: PrescriptionInput, now = new Date()) {
   const activeCount = await db.prescription.count({ where: { userId: user.id, status: 'ACTIVE' } });
   if (activeCount >= LIMITS.activePrescriptions) {
-    throw new AppError(
-      `Bir vaqtda ko'pi bilan ${LIMITS.activePrescriptions} ta faol retsept bo'lishi mumkin. Keraksizini yakunlang.`,
-      'conflict'
-    );
+    throw new AppError('err.maxActive', { n: LIMITS.activePrescriptions }, 'conflict');
   }
 
   const endDate = addDays(input.startDate, input.days - 1);
@@ -174,6 +248,13 @@ export async function createPrescription(user: User, input: PrescriptionInput, n
               dosage: m.dosage,
               meal: m.meal,
               times: m.times,
+              everyDays: m.everyDays,
+              weekdays: m.weekdays,
+              asNeeded: m.asNeeded,
+              maxPerDay: m.maxPerDay,
+              stock: m.stock,
+              stockUnit: m.stockUnit,
+              unitsPerDose: m.unitsPerDose,
               startDate: input.startDate,
               endDate: m.days ? addDays(input.startDate, m.days - 1) : endDate,
             })),
@@ -194,13 +275,13 @@ async function getOwnedPrescription(userId: string, id: string) {
     where: { id, userId },
     include: { medications: { orderBy: { createdAt: 'asc' } } },
   });
-  if (!prescription) throw new AppError('Retsept topilmadi', 'not_found');
+  if (!prescription) throw new AppError('err.rxNotFound', {}, 'not_found');
   return prescription;
 }
 
-async function getOwnedMedication(userId: string, id: string) {
+export async function getOwnedMedication(userId: string, id: string) {
   const med = await db.medication.findFirst({ where: { id, userId }, include: { prescription: true } });
-  if (!med) throw new AppError('Dori topilmadi', 'not_found');
+  if (!med) throw new AppError('err.medNotFound', {}, 'not_found');
   return med;
 }
 
@@ -258,16 +339,16 @@ export async function deletePrescription(userId: string, id: string) {
  */
 export async function setPrescriptionDays(user: User, id: string, days: number, now = new Date()) {
   if (!Number.isInteger(days) || days < 1 || days > LIMITS.maxCourseDays) {
-    throw new AppError(`Muddat 1–${LIMITS.maxCourseDays} kun bo'lishi kerak`);
+    throw new AppError('err.days', { max: LIMITS.maxCourseDays });
   }
   const p = await getOwnedPrescription(user.id, id);
-  if (p.status !== 'ACTIVE') throw new AppError('Yakunlangan retseptni o\'zgartirib bo\'lmaydi', 'conflict');
+  if (p.status !== 'ACTIVE') throw new AppError('err.rxFinished', {}, 'conflict');
 
   const tz = safeTimeZone(user.timezone);
   const today = dateIn(tz, now);
   const newEnd = addDays(p.startDate, days - 1);
   if (newEnd < today) {
-    throw new AppError(`Kurs ${p.startDate} da boshlangan — muddat kamida ${daysInclusive(p.startDate, today)} kun bo'lishi kerak`);
+    throw new AppError('err.minDays', { date: formatDate(p.startDate), n: daysInclusive(p.startDate, today) });
   }
 
   await db.$transaction(
@@ -309,13 +390,14 @@ export async function stopMedication(user: User, medicationId: string, now = new
 export async function updateMedicationTimes(user: User, medicationId: string, rawTimes: unknown, now = new Date()) {
   const med = await getOwnedMedication(user.id, medicationId);
   if (!med.isActive || med.prescription.status !== 'ACTIVE') {
-    throw new AppError("To'xtatilgan dorini o'zgartirib bo'lmaydi", 'conflict');
+    throw new AppError('err.medStopped', {}, 'conflict');
   }
+  if (med.asNeeded) throw new AppError('err.value');
   if (!Array.isArray(rawTimes) || rawTimes.length === 0 || !rawTimes.every(isTimeString)) {
-    throw new AppError("Vaqtlar noto'g'ri. Masalan: 08:00, 20:00");
+    throw new AppError('err.times');
   }
   const times = [...new Set(rawTimes as string[])].sort();
-  if (times.length > 8) throw new AppError("Kuniga ko'pi bilan 8 marta");
+  if (times.length > MAX_TIMES_PER_DAY) throw new AppError('err.maxTimes', { max: MAX_TIMES_PER_DAY });
 
   await db.$transaction(
     async (tx) => {
@@ -395,8 +477,9 @@ export async function countDosesByPrescription(
 ): Promise<Map<string, DoseCounts>> {
   const result = new Map<string, DoseCounts>();
   if (prescriptionIds.length === 0) return result;
+  // "Kerak bo'lganda" dorilari rejaga ega emas — rioya foiziga kirmaydi.
   const meds = await db.medication.findMany({
-    where: { prescriptionId: { in: prescriptionIds } },
+    where: { prescriptionId: { in: prescriptionIds }, asNeeded: false },
     select: { id: true, prescriptionId: true },
   });
   const byMed = await countDosesByMedication(

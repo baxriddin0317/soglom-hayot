@@ -4,6 +4,8 @@
 //
 // Sanalar "YYYY-MM-DD", vaqtlar "HH:MM" satrlari ko'rinishida uzatiladi.
 
+import type { Lang } from '@/lib/i18n';
+
 export const DEFAULT_TZ = 'Asia/Tashkent';
 const DAY_MS = 86_400_000;
 
@@ -194,31 +196,72 @@ export function suggestedTimes(perDay: number): string[] {
   });
 }
 
+
+/**
+ * "Har N soatda" uchun vaqtlar: birinchi qabuldan boshlab N soat qadam bilan, bir sutka ichida.
+ * intervalTimes(8, "06:00") -> ["06:00", "14:00", "22:00"]
+ */
+export function intervalTimes(hours: number, first = '08:00'): string[] {
+  const start = isTimeString(first) ? Number(first.slice(0, 2)) * 60 + Number(first.slice(3)) : 8 * 60;
+  const step = Math.max(1, Math.round(hours)) * 60;
+  const out = new Set<string>();
+  for (let m = 0; m < 24 * 60 && out.size < MAX_TIMES_PER_DAY; m += step) {
+    const total = (start + m) % (24 * 60);
+    out.add(`${pad(Math.floor(total / 60))}:${pad(total % 60)}`);
+  }
+  return [...out].sort();
+}
+
 // ---------------------------------------------------------------------------
-// Ko'rsatish
+// Qaysi kunlari ichiladi
 // ---------------------------------------------------------------------------
 
-const MONTHS = [
-  'yanvar',
-  'fevral',
-  'mart',
-  'aprel',
-  'may',
-  'iyun',
-  'iyul',
-  'avgust',
-  'sentyabr',
-  'oktyabr',
-  'noyabr',
-  'dekabr',
-];
-export const WEEKDAYS_SHORT = ['Ya', 'Du', 'Se', 'Ch', 'Pa', 'Ju', 'Sh'];
-const WEEKDAYS = ['Yakshanba', 'Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba'];
+export interface DaySchedule {
+  startDate: string;
+  everyDays: number;
+  weekdays: number[];
+}
 
-/** "2026-09-24" -> "24-sentyabr" */
-export function formatDayMonth(date: string): string {
+/** Dori shu sanada ichiladimi (kun ora / hafta kunlari hisobga olinadi). */
+export function isScheduledOn(med: DaySchedule, date: string): boolean {
+  if (med.weekdays.length > 0) return med.weekdays.includes(weekday(date));
+  if (med.everyDays > 1) return diffDays(med.startDate, date) % med.everyDays === 0;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Ko'rsatish (tilga bog'liq)
+// ---------------------------------------------------------------------------
+
+const MONTHS: Record<Lang, string[]> = {
+  uz: ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentyabr', 'oktyabr', 'noyabr', 'dekabr'],
+  uz_cyrl: ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'],
+  // Родительный падеж: "24 сентября".
+  ru: ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'],
+};
+
+export const WEEKDAYS_SHORT: Record<Lang, string[]> = {
+  uz: ['Ya', 'Du', 'Se', 'Ch', 'Pa', 'Ju', 'Sh'],
+  uz_cyrl: ['Як', 'Ду', 'Се', 'Чо', 'Па', 'Жу', 'Ша'],
+  ru: ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'],
+};
+
+const WEEKDAYS: Record<Lang, string[]> = {
+  uz: ['Yakshanba', 'Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba'],
+  uz_cyrl: ['Якшанба', 'Душанба', 'Сешанба', 'Чоршанба', 'Пайшанба', 'Жума', 'Шанба'],
+  ru: ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'],
+};
+
+const RELATIVE: Record<Lang, [string, string, string]> = {
+  uz: ['Kecha', 'Bugun', 'Ertaga'],
+  uz_cyrl: ['Кеча', 'Бугун', 'Эртага'],
+  ru: ['Вчера', 'Сегодня', 'Завтра'],
+};
+
+/** "2026-09-24" -> "24-sentyabr" / "24 сентября" */
+export function formatDayMonth(date: string, lang: Lang = 'uz'): string {
   const [, m, d] = date.split('-').map(Number);
-  return `${d}-${MONTHS[m - 1]}`;
+  return lang === 'ru' ? `${d} ${MONTHS.ru[m - 1]}` : `${d}-${MONTHS[lang][m - 1]}`;
 }
 
 /** "2026-09-24" -> "24.09.2026" */
@@ -233,20 +276,62 @@ export function formatShort(date: string): string {
   return `${d}.${m}`;
 }
 
-export function weekdayName(date: string): string {
-  return WEEKDAYS[weekday(date)];
+export function weekdayName(date: string, lang: Lang = 'uz'): string {
+  return WEEKDAYS[lang][weekday(date)];
+}
+
+export function weekdayShort(day: number, lang: Lang = 'uz'): string {
+  return WEEKDAYS_SHORT[lang][day];
+}
+
+/** Hafta kunlari ro'yxati: [1, 3, 5] -> "Du, Ch, Ju" (dushanbadan boshlab). */
+export function weekdaysText(days: number[], lang: Lang = 'uz'): string {
+  return [...days]
+    .sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7))
+    .map((d) => weekdayShort(d, lang))
+    .join(', ');
+}
+
+/**
+ * Foydalanuvchi yozgan hafta kunlari: "Du Ch Ju", "пн, ср, пт", "Ду Чо Жу". Istalgan tilda,
+ * katta-kichik harf farqi yo'q. Tushunilmasa — null.
+ */
+export function parseWeekdays(text: string): number[] | null {
+  const tokens = text
+    .toLowerCase()
+    .split(/[\s,;./|–-]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (tokens.length === 0) return null;
+  const out = new Set<number>();
+  for (const token of tokens) {
+    let found = -1;
+    for (const lang of Object.keys(WEEKDAYS) as Lang[]) {
+      const idx = WEEKDAYS[lang].findIndex((name, i) => {
+        const full = name.toLowerCase();
+        const short = WEEKDAYS_SHORT[lang][i].toLowerCase();
+        return token === short || token === full || (token.length >= 2 && full.startsWith(token) && token.length >= short.length);
+      });
+      if (idx >= 0) {
+        found = idx;
+        break;
+      }
+    }
+    if (found < 0) return null;
+    out.add(found);
+  }
+  return [...out].sort();
 }
 
 /** Bugun / Ertaga / Kecha yoki "24-sentyabr". */
-export function relativeDay(date: string, today: string): string {
+export function relativeDay(date: string, today: string, lang: Lang = 'uz'): string {
   const diff = diffDays(today, date);
-  if (diff === 0) return 'Bugun';
-  if (diff === 1) return 'Ertaga';
-  if (diff === -1) return 'Kecha';
-  return formatDayMonth(date);
+  if (diff >= -1 && diff <= 1) return RELATIVE[lang][diff + 1];
+  return formatDayMonth(date, lang);
 }
 
-/** Kun so'zini to'g'ri shaklda: "7 kun". O'zbek tilida ko'plik qo'shimchasi kerak emas. */
-export function daysLabel(n: number): string {
-  return `${n} kun`;
+/** Miqdor: 2 -> "2", 2.5 -> "2,5", 0.5 -> "0,5". */
+export function formatQty(n: number): string {
+  const rounded = Math.round(n * 100) / 100;
+  return String(rounded).replace('.', ',');
 }

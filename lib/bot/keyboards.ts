@@ -1,21 +1,22 @@
 import { Markup } from 'telegraf';
+import { allVariants, t, type Key, type Lang } from '@/lib/i18n';
 import { getWebAppUrl } from '@/lib/webapp/url';
 
-// Pastki (reply) klaviatura matnlari. Bot aynan shu matnlarni tutadi — klaviatura va handler
-// bir-biridan ajrab qolmasligi uchun faqat shu yerda yoziladi.
-export const BUTTONS = {
-  today: '📅 Bugungi dorilar',
-  add: '➕ Yangi retsept',
-  list: '📋 Retseptlarim',
-  report: '📊 Hisobot',
-  settings: '⚙️ Sozlamalar',
-  help: 'ℹ️ Yordam',
-  back: '◀️ Orqaga',
-  cancel: '❌ Bekor qilish',
-  skip: "⏭ O'tkazib yuborish",
-} as const;
+// Pastki (reply) klaviatura. Tugma matni foydalanuvchi tilida, lekin bot har qanday tildagi
+// variantni taniydi — foydalanuvchi tilni almashtirganda eski klaviatura ham ishlayveradi.
 
-export type MenuAction = 'today' | 'add' | 'list' | 'history' | 'report' | 'settings' | 'help' | 'home';
+export type MenuAction = 'today' | 'add' | 'list' | 'history' | 'stock' | 'report' | 'settings' | 'help' | 'home' | 'admin';
+
+const MENU_KEYS: [Key, MenuAction][] = [
+  ['menu.today', 'today'],
+  ['menu.add', 'add'],
+  ['menu.list', 'list'],
+  ['menu.stock', 'stock'],
+  ['menu.report', 'report'],
+  ['menu.settings', 'settings'],
+  ['menu.help', 'help'],
+  ['menu.admin', 'admin'],
+];
 
 // Eski versiyadagi klaviatura tugmalari. Ba'zi foydalanuvchilarda eski klaviatura hali ochiq
 // turibdi — ular ham ishlashda davom etadi.
@@ -34,45 +35,45 @@ const LEGACY_BUTTONS: Record<string, MenuAction> = {
   '🔙 Orqaga': 'home',
 };
 
-const MENU_BUTTONS: Record<string, MenuAction> = {
-  [BUTTONS.today]: 'today',
-  [BUTTONS.add]: 'add',
-  [BUTTONS.list]: 'list',
-  [BUTTONS.report]: 'report',
-  [BUTTONS.settings]: 'settings',
-  [BUTTONS.help]: 'help',
-  ...LEGACY_BUTTONS,
-};
+const MENU_BUTTONS: Record<string, MenuAction> = { ...LEGACY_BUTTONS };
+for (const [key, action] of MENU_KEYS) {
+  for (const text of allVariants(key)) MENU_BUTTONS[text] = action;
+}
 
 export function menuActionFor(text: string): MenuAction | null {
   return MENU_BUTTONS[text] ?? null;
 }
 
-export function mainKeyboard() {
+/** Foydalanuvchi bosgan tugma shu kalitning (istalgan tildagi) matnimi. */
+export function isButton(text: string, key: Key, params?: Record<string, string | number>): boolean {
+  return allVariants(key, params).includes(text);
+}
+
+export function mainKeyboard(lang: Lang, { admin = false }: { admin?: boolean } = {}) {
+  const tr = (key: Key) => t(lang, key);
   return Markup.keyboard([
-    [BUTTONS.today],
-    [BUTTONS.add, BUTTONS.list],
-    [BUTTONS.report, BUTTONS.settings],
-    [BUTTONS.help],
+    [tr('menu.today')],
+    [tr('menu.add'), tr('menu.list')],
+    [tr('menu.stock'), tr('menu.report')],
+    [tr('menu.settings'), tr('menu.help')],
+    ...(admin ? [[tr('menu.admin')]] : []),
   ]).resize();
 }
 
 /** Dialog qadamlari uchun: variantlar + [Orqaga] [Bekor qilish]. */
-export function stepKeyboard(rows: string[][], { back = true }: { back?: boolean } = {}) {
-  const nav = back ? [BUTTONS.back, BUTTONS.cancel] : [BUTTONS.cancel];
+export function stepKeyboard(lang: Lang, rows: string[][], { back = true }: { back?: boolean } = {}) {
+  const nav = back ? [t(lang, 'common.back'), t(lang, 'common.cancel')] : [t(lang, 'common.cancel')];
   return Markup.keyboard([...rows, nav]).resize();
 }
 
-export const OPEN_APP_TEXT = '📱 Ilovani ochish';
-
-export function openAppKeyboard(url: string) {
-  return Markup.inlineKeyboard([[Markup.button.webApp(OPEN_APP_TEXT, url)]]);
+export function openAppKeyboard(url: string, lang: Lang) {
+  return Markup.inlineKeyboard([[Markup.button.webApp(t(lang, 'start.openAppButton'), url)]]);
 }
 
 /** Inline klaviaturaga qo'shiladigan "Ilovada ochish" tugmasi (URL sozlangan bo'lsa). */
-export function appButtonRow(path = '') {
+export function appButtonRow(lang: Lang, path = '') {
   const url = getWebAppUrl();
-  return url ? [Markup.button.webApp('📱 Ilovada ochish', `${url}${path}`)] : null;
+  return url ? [Markup.button.webApp(t(lang, 'start.inApp'), `${url}${path}`)] : null;
 }
 
 /** Ro'yxatni n tadan qatorlarga bo'lish. */

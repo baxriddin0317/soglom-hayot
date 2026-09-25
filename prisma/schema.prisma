@@ -41,6 +41,12 @@ model User {
   lastName     String?
   username     String?
   languageCode String?
+  // Interfeys tili: "uz" (lotin), "uz_cyrl" (kirill), "ru". null — hali tanlanmagan
+  // (Telegram tilidan taxmin qilinadi, /start da tanlash taklif qilinadi).
+  language     String?
+  // Admin (ADMIN_TELEGRAM_IDS dagi) uchun: true — admin menyusi ko'rinadi, false — oddiy
+  // foydalanuvchi ko'rinishi. Adminlik huquqini bermaydi, faqat ko'rinishni almashtiradi.
+  adminMode    Boolean @default(true)
 
   // IANA vaqt zonasi. Dozalarning aniq vaqti (scheduledAt) shu zona bo'yicha hisoblanadi.
   timezone         String  @default("Asia/Tashkent")
@@ -108,6 +114,25 @@ model Medication {
   endDate   String
   isActive  Boolean @default(true)
 
+  // Qaysi kunlari ichiladi: everyDays = 1 — har kuni, 2 — kun ora, 3 — har 3 kunda (startDate dan
+  // hisoblanadi). weekdays — haftaning aniq kunlari (0 = yakshanba ... 6 = shanba), bo'sh — cheklov yo'q.
+  everyDays Int   @default(1)
+  weekdays  Int[] @default([])
+
+  // "Kerak bo'lganda" (og'riq, harorat) — jadval va eslatma yo'q, foydalanuvchi ichganini o'zi belgilaydi.
+  asNeeded  Boolean @default(false)
+  // Kuniga ko'pi bilan necha marta (faqat asNeeded uchun, ixtiyoriy).
+  maxPerDay Int?
+
+  // Zaxira: qo'lda qolgan miqdor (null — kuzatilmaydi). Har "ichdim" da unitsPerDose ga kamayadi.
+  stock              Float?
+  // "tablet" | "capsule" | "ml" | "drop" | "ampoule" | "sachet" | "piece"
+  stockUnit          String?
+  unitsPerDose       Float     @default(1)
+  // Zaxira shuncha kunga qolganda ogohlantirish.
+  refillDays         Int       @default(3)
+  lowStockNotifiedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -145,4 +170,11 @@ model Dose {
   @@index([status, scheduledAt])
   @@index([userId, date])
   @@index([userId, scheduledAt])
+}
+
+// Tizim holati (kalit — qiymat): cron'ning oxirgi ishlashi, adminlarga yuborilgan ogohlantirishlar va h.k.
+model SystemState {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
 }

@@ -11,10 +11,20 @@ Supabase Postgres + Prisma 7 · Vercel · cron-job.org.
 ## Imkoniyatlar
 
 **Bot**
+- 🌐 Uch til: o'zbek (lotin), o'zbek (kirill), rus. Birinchi /start da til tanlanadi, keyin
+  «⚙️ Sozlamalar» yoki /lang orqali o'zgartiriladi. Kirill matnlari lotindan avtomatik o'giriladi.
 - ➕ Retsept kiritish dialogi: nomi, muddati (kun), boshlanish sanasi, dorilar — miqdori,
-  kuniga necha marta, aniq soatlar (tavsiya yoki o'zi yozadi: `8:00 13:30 21:00`), dori o'z
-  muddati (masalan antibiotik 5 kun, kurs 7 kun), ovqatga nisbatan. Har qadamda «Orqaga» /
-  «Bekor qilish». Retsept faqat oxirida saqlanadi.
+  kuniga necha marta **yoki har N soatda yoki «kerak bo'lganda»** (kunlik chegara bilan), aniq
+  soatlar (tavsiya yoki o'zi yozadi: `8:00 13:30 21:00`), **qaysi kunlari** (har kuni / kun ora /
+  har 3 kunda / hafta kunlari), dori o'z muddati (masalan antibiotik 5 kun, kurs 7 kun), ovqatga
+  nisbatan, **zaxira** (qo'lda qancha bor). Har qadamda «Orqaga» / «Bekor qilish». Retsept faqat
+  oxirida saqlanadi.
+- 📦 Dori zaxirasi: har «Ichdim» da zaxira kamayadi (bekor qilinsa qaytadi). Prognoz haqiqiy
+  jadval bo'yicha — «28-sentyabrgacha yetadi», «kurs oxirigacha yana 6 tabletka kerak». Zaxira
+  belgilangan kun (1–7) ichida tugaydigan bo'lsa bot kunduzi ogohlantiradi, tugmalar bilan
+  «+10 / +20 / +30» qo'shish yoki aniq sonini yozish mumkin. Eslatmada ham qoldiq ko'rinadi.
+- 💊 «Kerak bo'lganda» dorilari (og'riq, harorat): eslatma yo'q, «Hozir ichdim» bilan qayd
+  qilinadi, kunlik chegaradan oshsa ogohlantiriladi, rioya foiziga kirmaydi.
 - ⏰ Eslatmalar: bir vaqtdagi dorilar bitta xabarda, «✅ Ichdim» / «⏭ O'tkazib yubordim» /
   «Hammasini ichdim». Oldindan eslatish (5–30 daq), javob bo'lmasa qayta eslatish (eski xabar
   o'chiriladi), 3 soatdan keyin «belgilanmadi» — keyin ham «Ichgan edim» deb tuzatish mumkin.
@@ -22,10 +32,15 @@ Supabase Postgres + Prisma 7 · Vercel · cron-job.org.
   vaqtlarni o'zgartirish, dorini to'xtatish, kursni yakunlash, o'chirish), 🧾 tarix.
 - 📊 Hisobot: 7/30 kun, rioya %, ketma-ket to'liq kunlar, dorilar bo'yicha.
 - 🎉 Kurs tugaganda natija xabari. Vaqt zonasi sozlamasi (eslatmalar zonaga qarab qayta hisoblanadi).
-- Eski versiya klaviaturasi tugmalari ham ishlaydi.
+- 🛠 Admin panel (`ADMIN_TELEGRAM_IDS`): foydalanuvchilar, faollik, yangi qo'shilganlar, D7 qaytish,
+  rioya, tillar, cron va webhook holati. Admin bitta tugma bilan oddiy foydalanuvchi rejimiga o'tadi
+  (`/admin` bilan qaytadi).
+- 📷 Rasm yuborilsa — hozircha qo'lda kiritishga yo'naltiradi (AI orqali o'qish keyingi bosqich).
+- Eski versiya klaviaturasi tugmalari (va boshqa tildagi tugmalar) ham ishlaydi.
 
 **Mini App** (`/app`, chatdagi «Ilova» tugmasi): Bugun · Retseptlar (+ yangi retsept formasi) ·
-Hisobot · Sozlamalar. Telegram mavzusiga (yorug'/qorong'i) moslashadi. Har so'rov Telegram
+Zaxira · Hisobot · Sozlamalar (+ adminlar uchun Admin). Umumiy UI holati — Zustand
+(`app/app/store.ts`), server ma'lumotlari — `useApi` keshi. Telegram mavzusiga (yorug'/qorong'i) moslashadi. Har so'rov Telegram
 `initData` imzosi bilan tekshiriladi — boshqa odamning ma'lumotini ko'rib bo'lmaydi.
 
 ---
@@ -38,7 +53,8 @@ shuning uchun Render'dagi "uxlab qolish" muammosi yo'q.
 | Endpoint | Kim chaqiradi | Nima qiladi |
 |---|---|---|
 | `POST /api/telegram` | Telegram (webhook) | Xabar va tugmalarni qayta ishlaydi |
-| `GET /api/cron/tick?key=…` | cron-job.org, **har daqiqada** | Eslatma, qayta eslatma, "belgilanmadi", kurs yakuni |
+| `GET /api/cron/tick?key=…` | cron-job.org, **har daqiqada** | Eslatma, qayta eslatma, "belgilanmadi", kurs yakuni, zaxira ogohlantirishi |
+| `GET /api/health` | UptimeRobot va h.k. (ixtiyoriy) | 200 — baza va cron ishlayapti, 503 — cron 5 daqiqadan beri ishlamagan |
 | `GET /api/telegram/setup?key=…` | Siz, deploydan keyin bir marta | Webhook, «Ilova» menyu tugmasi, buyruqlar |
 | `/app` + `/api/app/*` | Telegram Mini App | Ilova ekranlari |
 
@@ -46,6 +62,11 @@ Retsept saqlanganda butun kurs uchun har bir doza (dori + sana + soat) oldindan 
 jadvaliga yoziladi. Cron har daqiqada "vaqti kelgan, hali eslatilmagan" dozalarni topadi.
 Har doza avval bazada atomar band qilinadi, keyin xabar ketadi — cron ikki marta ishlasa ham
 takror xabar bo'lmaydi. Botni bloklagan foydalanuvchiga xabar yuborilmaydi.
+
+**Monitoring.** Har cron chaqiruvi oxirgi ishlagan vaqtini bazaga (`SystemState`) yozadi. Cron
+5 daqiqadan ko'p ishlamasa — adminlarga Telegram'da ogohlantirish (soatiga ko'pi bilan bir marta;
+tekshiruvni foydalanuvchi xabarlari va `/api/health` ishga tushiradi), cron qayta ishlasa —
+"tiklandi" xabari, cron xato bilan tugasa — xato matni.
 
 > ⚠️ **Bot tokeni bilan hech qayerda `bot.launch()` (long polling) ishlamasligi kerak** —
 > u webhook'ni o'chirib yuboradi. Eski Render servisi butunlay o'chirilishi shart (6-qadam).
@@ -92,6 +113,7 @@ eslatmalar qayta rejalashtiriladi. Qayta ishga tushirish xavfsiz.
 | `TELEGRAM_BOT_TOKEN` | @BotFather tokeni |
 | `TELEGRAM_WEBHOOK_SECRET` | Tasodifiy 32+ belgi (`A-Z a-z 0-9 _ -`) |
 | `CRON_SECRET` | Boshqa tasodifiy 32+ belgi |
+| `ADMIN_TELEGRAM_IDS` | Adminlarning Telegram ID'lari, vergul bilan (ixtiyoriy) |
 | `DATABASE_URL` | Supabase pooler (6543) |
 | `DIRECT_URL` | Supabase 5432 (build uchun shart emas, lekin bir xil saqlang) |
 
@@ -133,6 +155,19 @@ https://<DOMEN>/api/telegram/setup?key=<CRON_SECRET>&drop=1
 - [ ] «➕ Yangi retsept» → retsept saqlanadi, «📅 Bugungi dorilar» da ko'rinadi
 - [ ] cron-job.org birinchi chaqiruv → `{"ok":true,"reminders":0,...}`
 - [ ] Render servisi o'chirilgan
+- [ ] `https://<DOMEN>/api/health` → `"ok": true` (UptimeRobot'ga qo'shish tavsiya etiladi — cron-job.org
+      o'zi to'xtasa ham xabar olasiz)
+- [ ] Admin: botga `/admin` → statistika
+
+### 🔄 Yangilanish (mavjud o'rnatishga)
+
+Sxema o'zgargan bo'lsa, **kod deploy qilinishidan oldin** bazani yangilang, keyin setup'ni qayta oching:
+
+```bash
+npm run db:deploy                                   # yangi migratsiyalar (DIRECT_URL orqali)
+# Vercel'ga deploy
+https://<DOMEN>/api/telegram/setup?key=<CRON_SECRET>  # yangi buyruqlar (/stock, /lang), ruscha tavsif
+```
 
 ---
 
@@ -159,7 +194,10 @@ app/api/cron/tick       fon vazifalari
 app/api/app/*           Mini App API
 app/app/                Mini App (React)
 lib/bot/                bot: handler'lar, klaviaturalar, xabar ko'rinishlari, dialog holati
-lib/services/           retseptlar, dozalar, eslatmalar (scheduler), statistika, foydalanuvchilar
+lib/services/           retseptlar, dozalar, eslatmalar (scheduler), zaxira (stock), statistika,
+                        foydalanuvchilar, admin statistikasi, monitoring (system)
+lib/i18n/               lug'atlar: uz.ts (asosiy), ru.ts; kirill — avtomatik
+lib/format.ts           bot va ilova uchun umumiy matn bo'laklari
 lib/webapp/             initData tekshiruvi, API turlari
 lib/time.ts             vaqt zonasi bilan ishlash
 prisma/                 sxema va migratsiyalar
